@@ -1,0 +1,68 @@
+name: Release
+
+# Deliberately manual. There is no push or tag trigger, so nothing publishes by
+# accident while the project is still private: a release happens because someone
+# went to the Actions tab and asked for one.
+#
+# `publish: false` is the default, so the ordinary run builds the artifacts,
+# validates them, and installs the wheel into a clean environment without
+# uploading anything. That is worth doing on its own -- it is the check that
+# caught PyYAML being used but never declared, which passed every local test and
+# failed on a machine that did not already have it.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Actually upload to PyPI (leave false to build and verify only)"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Validate metadata
+        run: python -m twine check dist/*
+
+      - name: Install the wheel into a clean environment
+        # The point is what is *not* here: no dev extras, no editable install,
+        # nothing the repository checkout would otherwise provide. If a runtime
+        # dependency is undeclared, this is where it shows.
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/python -m pip install dist/*.whl
+          /tmp/clean/bin/streamdouble --version
+          /tmp/clean/bin/python -c "
+          from streamdouble import audio, chaos, metrics, protocol, scenario
+          print('imports ok')
+          print(len(audio.wav_to_ulaw_frames('fixtures/speech_8k.wav')), 'frames')
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        if: ${{ inputs.publish }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "PYPI_API_TOKEN is not set in this repository's secrets." >&2
+            echo "Add it under Settings > Secrets and variables > Actions." >&2
+            exit 1
+          fi
+          python -m twine upload dist/*

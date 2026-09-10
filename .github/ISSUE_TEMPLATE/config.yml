@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Is my agent any good?
+    url: https://github.com/shaswat28/streamdouble#how-this-compares
+    about: >
+      streamdouble tests the transport seam, not what your agent says. For
+      conversation quality, personas or transcript scoring, the comparison table
+      points at tools that do that well.

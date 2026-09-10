@@ -1,0 +1,21 @@
+# The caller interrupts the agent mid-sentence.
+#
+# A correct agent stops talking and sends `clear` to discard the audio Twilio
+# has buffered but not yet played. An agent that does not will keep speaking
+# over the caller for however much audio is already queued -- which on a real
+# call is the difference between a conversation and being talked at.
+name: caller interrupts the greeting
+
+steps:
+  # Let the agent get properly under way before cutting in. Silence is still
+  # streamed throughout -- the caller is quiet, the call is not.
+  - wait_for: audio
+  - wait: 1.5
+
+  # Talk over it.
+  - say: ../fixtures/speech_8k.wav
+
+  # A correct agent has now asked for the buffered audio to be dropped.
+  - expect: clear
+
+  - wait: 1.0

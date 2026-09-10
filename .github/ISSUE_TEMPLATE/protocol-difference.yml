@@ -1,0 +1,47 @@
+name: Protocol difference
+description: streamdouble behaves differently from real Twilio
+labels: ["protocol"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most valuable report this project can receive.
+
+        streamdouble claims an agent cannot tell it from Twilio, and that claim
+        is only as good as our reading of a specification that does not cover
+        everything. Several behaviours are inferences, marked as such in the
+        code. If you have watched a real call do something we do not, we want to
+        know.
+
+  - type: textarea
+    id: real-behaviour
+    attributes:
+      label: What real Twilio does
+      description: >
+        A frame capture, a log line, a screenshot of Twilio's debugger —
+        anything showing the real behaviour beats a description, because what
+        the real thing does is the entire question. If you cannot share a
+        capture, describe what you saw and how you saw it; that is still useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: streamdouble-behaviour
+    attributes:
+      label: What streamdouble does instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: What breaks because of the difference
+      description: >
+        For example "our agent hangs waiting for a mark" or "our VAD never
+        fires". This tells us whether the difference is cosmetic or load-bearing.
+
+  - type: input
+    id: version
+    attributes:
+      label: streamdouble version
+      placeholder: "0.1.0"
