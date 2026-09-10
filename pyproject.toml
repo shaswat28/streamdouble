@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "streamdouble"
+version = "0.1.0.dev0"
+description = "A framework-agnostic Twilio Media Streams simulator. Test your voice agent's WebSocket endpoint locally, at full protocol fidelity, without placing a real call."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Shaswat Sharma", email = "shaswatsharma28@gmail.com" }]
+keywords = ["twilio", "media-streams", "voice", "websocket", "testing", "mulaw", "g711"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Telephony",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = [
+  "numpy>=1.24",
+  "websockets>=12.0",
+  # Scenario files are a headline feature, not an add-on, so PyYAML is a base
+  # dependency rather than an extra. It is small and ubiquitous, and gating a
+  # documented capability behind an extra is friction that buys nothing.
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+resample = ["soxr>=0.3.7"]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "soxr>=0.3.7",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "httpx>=0.27",  # fastapi.testclient
+  "pytest-timeout>=2.3",
+]
+
+[project.scripts]
+streamdouble = "streamdouble.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/shaswat28/streamdouble"
+Issues = "https://github.com/shaswat28/streamdouble/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/streamdouble"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+  # Warnings are errors: several real bugs in this package surfaced first as a
+  # warning, and a suite that tolerates them would have missed those.
+  "error",
+  # Third-party only, and each one is load-bearing to ignore rather than merely
+  # noisy. uvicorn's websockets implementation calls the legacy websockets
+  # server API, which warns about its own handler signature -- as an error that
+  # aborts the WebSocket handshake, which killed every session test with a
+  # connection timeout that looked nothing like its cause.
+  "ignore:remove second argument of ws_handler:DeprecationWarning",
+  "ignore:websockets.legacy is deprecated:DeprecationWarning",
+  "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+  # audioop announces its own removal on import. Only the codec parity test
+  # imports it, and only to check this package does not need it.
+  "ignore:'audioop' is deprecated:DeprecationWarning",
+]

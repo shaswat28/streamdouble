@@ -1,0 +1,9 @@
+# Normalise text to LF in the repository. CI runs the same test suite on
+# Windows and Linux, and the golden-file test pins exact bytes, so line-ending
+# drift between platforms would show up as a spurious failure.
+* text=auto eol=lf
+
+# Audio fixtures are binary and must never be touched. A single CRLF
+# substitution inside a WAV corrupts the audio silently -- it still loads, it
+# just sounds wrong, which is the hardest possible way to find this bug.
+*.wav binary

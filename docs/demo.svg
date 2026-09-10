@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="741" height="444"
+     viewBox="0 0 741 444"
+     font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+     font-size="13" role="img"
+     aria-label="streamdouble placing a simulated Twilio call">
+  <title>streamdouble placing a simulated Twilio call</title>
+  <style>
+    text { opacity: 0; animation: reveal 9.33s linear infinite; white-space: pre; }
+    @keyframes reveal {
+      0%   { opacity: 0; }
+      0.6% { opacity: 1; }
+      97%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+  <rect width="741" height="444" rx="8" fill="#1c2128"/>
+  <rect width="741" height="30" rx="8" fill="#2d333b"/>
+  <rect y="22" width="741" height="8" fill="#2d333b"/>
+  <circle cx="18" cy="15" r="5" fill="#ff5f56"/><circle cx="36" cy="15" r="5" fill="#ffbd2e"/><circle cx="54" cy="15" r="5" fill="#27c93f"/>
+  <text x="370.5" y="19" fill="#8b949e" font-size="11" text-anchor="middle">streamdouble</text>
+  <text x="18" y="69" fill="#79c0ff" style="animation-delay:0.00s">$ streamdouble call ws://localhost:8000/media-stream \</text>
+  <text x="18" y="90" fill="#d4d8de" style="animation-delay:0.05s">      --audio hello.wav --out reply.wav --max-first-audio-ms 800</text>
+  <text x="18" y="111" fill="#8b949e" style="animation-delay:0.76s">calling ws://localhost:8000/media-stream with 100 frames (2.00s of audio)</text>
+  <text x="18" y="132" fill="#d4d8de" style="animation-delay:3.29s"> </text>
+  <text x="18" y="153" fill="#d4d8de" style="animation-delay:3.33s">  stream        MZ13a814e94a5a3fa5cac62bbdcc86f783</text>
+  <text x="18" y="174" fill="#d4d8de" style="animation-delay:3.37s">  sent          100 frames (2.00s)</text>
+  <text x="18" y="195" fill="#d4d8de" style="animation-delay:3.41s">  received      100 media frames (2.00s)</text>
+  <text x="18" y="216" fill="#d4d8de" style="animation-delay:3.45s">  first audio   552 ms</text>
+  <text x="18" y="237" fill="#d4d8de" style="animation-delay:3.49s">  gaps          mean 14 ms, p95 32 ms, max 62 ms</text>
+  <text x="18" y="258" fill="#d4d8de" style="animation-delay:3.53s">  marks         1 received, 1 echoed</text>
+  <text x="18" y="279" fill="#d4d8de" style="animation-delay:3.57s">  pacing        100 frames in 1.97s (drift -6.0ms, 50 late, max 29.8ms)</text>
+  <text x="18" y="300" fill="#d4d8de" style="animation-delay:3.61s"> </text>
+  <text x="18" y="321" fill="#7ee787" style="animation-delay:3.65s">  first audio: 552ms (limit 800ms) ok</text>
+  <text x="18" y="342" fill="#d4d8de" style="animation-delay:3.69s"> </text>
+  <text x="18" y="363" fill="#7ee787" style="animation-delay:3.73s">wrote reply.wav (2.00s)</text>
+  <text x="18" y="384" fill="#d4d8de" style="animation-delay:3.98s"> </text>
+  <text x="18" y="405" fill="#79c0ff" style="animation-delay:4.18s">$ echo $?</text>
+  <text x="18" y="426" fill="#d4d8de" style="animation-delay:4.33s">0</text>
+</svg>

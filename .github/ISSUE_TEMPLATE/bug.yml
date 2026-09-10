@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in streamdouble itself is wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The exact command, please. If it involves network impairment, include
+        `--chaos-seed` — impairments are seeded precisely so a failing run can be
+        replayed, and without the seed we are guessing.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: >
+        `--json` output is ideal. It carries the pacing statistics, which say
+        whether the timing figures can be trusted at all.
+      render: shell
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+      placeholder: "Windows 11, Python 3.12"
+    validations:
+      required: true
