@@ -3,8 +3,9 @@
 > A framework-agnostic Twilio Media Streams simulator. Test your voice agent's
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-**Status:** Phases 1-5 complete, gates 1-4 passed. Public, not yet on PyPI.
-Gate 5 (fresh-eyes / clean-machine) is partly done and partly owed.
+**Status:** Phases 1-5 complete, gates 1-4 passed, Phase 6 under way. Public,
+not yet on PyPI. Gate 5 (fresh-eyes / clean-machine) is partly done and partly
+owed.
 **License:** Apache-2.0
 **Language:** Python 3.11+
 **Name:** `streamdouble` — `dialtone` was taken on PyPI. See [Progress](#progress).
@@ -368,19 +369,26 @@ That is the proof the tool has value beyond the happy path.
 
 ---
 
-### Phase 6 — Distribution ⬜ NOT STARTED
+### Phase 6 — Distribution 🔨 IN PROGRESS
 
-- **Claude Code skill wrapper** — lets Claude drive the tool ("test this handler
-  against a noisy caller"). Small, and it is your foot in the plugin ecosystem
-- Launch posts: r/twilio, r/voiceai, Show HN, the Pipecat and LiveKit community
-  channels. **Frame it as complementary, not competitive** — "test your LiveKit
-  agent's Twilio seam" is a friendly pitch that their maintainers may amplify;
-  "LiveKit alternative" is a fight you lose
-- Comment on [LiveKit issue #3379](https://github.com/livekit/agents/issues/3379)
-  if the tool reproduces it — that is a genuinely useful contribution and free,
-  well-targeted visibility
-- Write up the μ-law/framing gotchas as a blog post. The knowledge is scarce and
-  the post will outrank the repo in search
+- [x] **Claude Code skill wrapper** — `skill/SKILL.md`. Carries the judgement
+      as well as the commands: disable what the agent touches on hangup before
+      the first call, never report a `null` latency as fast, and do not diagnose
+      barge-in with synthetic audio.
+- [x] **Launch posts drafted** — `docs/launch-drafts.md`, for Show HN, r/twilio,
+      r/voiceai and the framework community channels. **Nothing posted.** Each
+      leads with the barge-in bug rather than a feature list, because everyone
+      claims their tool finds bugs and a specific one with numbers is different.
+- [x] **The μ-law/framing write-up** — `docs/mulaw-gotchas.md`.
+- [ ] ~~Comment on [LiveKit issue #3379](https://github.com/livekit/agents/issues/3379)~~
+      **Recommended against, and the reason is worth keeping.** That issue is a
+      WebSocket connecting through ngrok and then never delivering media.
+      streamdouble replaces Twilio and runs locally, so there is no tunnel in
+      the path — it cannot reproduce a tunnel fault. What it does is *bisect*
+      one: run it against the same endpoint, watch media flow correctly, and the
+      fault is isolated to the tunnel rather than the agent. That is genuinely
+      useful and is not what the issue asked for. The issue is also closed, so a
+      comment would be a resolved thread receiving what reads as promotion.
 
 ---
 

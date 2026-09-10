@@ -259,6 +259,25 @@ frames earlier.
 `PLAN.md` records the build plan, the decisions taken, and what each review gate
 found.
 
+## Use it from Claude Code
+
+`skill/SKILL.md` is a Claude Code skill wrapper. Copy it into `.claude/skills/`
+and Claude can drive streamdouble directly — "test this agent with a caller who
+interrupts", "is it answering fast enough", "why does barge-in not fire".
+
+It carries the judgement that matters as much as the commands: disable whatever
+your agent touches on hangup before the first call, never report a `null`
+latency as fast, and do not diagnose barge-in with synthetic audio, because a
+transcription service will not transcribe it and the test fails for the wrong
+reason.
+
+## Notes
+
+[Six ways to get Twilio Media Streams audio wrong](docs/mulaw-gotchas.md) —
+what building this turned up, including why μ-law silence is `0xFF`, why one
+code exists that no encoder emits, and why "finished sending" is not "finished
+speaking".
+
 ## Not affiliated with Twilio
 
 This project is not affiliated with, endorsed by, or sponsored by Twilio. It
