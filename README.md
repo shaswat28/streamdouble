@@ -151,6 +151,26 @@ Where 800 ms comes from: human turn-taking gaps cluster at
 thumb for voice agents rather than a research finding — `metrics.py` says so
 too, rather than borrowing the paper's authority for it.
 
+## Use it from pytest
+
+Most people testing a voice agent already have a pytest suite. Installing the
+package registers a fixture, so a call is one line in it:
+
+```python
+async def test_the_agent_answers_quickly(simulated_call):
+    report = await simulated_call(AGENT_URL, audio="hello.wav")
+    assert report.spoke
+    assert report.time_to_first_audio_ms < 800
+```
+
+No shelling out, no parsing JSON. The CLI is a renderer over the same API, so
+what you assert on here and what `--json` prints cannot disagree.
+
+An agent that never spoke has `time_to_first_audio_ms` of `None`, and the
+plugin explains that failure rather than leaving you with a bare `TypeError`.
+Full reference, including per-suite configuration and the pytest-asyncio
+setting you need: **[docs/python-api.md](docs/python-api.md)**.
+
 ## Script a whole call
 
 A single clip is one test. The bugs live in the timing *between* things — the
@@ -200,6 +220,26 @@ frames continuously for its whole duration, and voice-activity detection depends
 on that. A simulator that goes quiet looks like a dead line rather than a quiet
 caller, and the resulting "my agent never finalises the transcript" is a bug in
 the test tool.
+
+## See what actually went over the wire
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --trace call.jsonl
+```
+
+One JSON object per frame, both directions, with timings. This is the artefact
+to attach when you think the *simulation* is wrong rather than your agent --
+which is the most valuable bug report this project can receive.
+
+Audio payloads are left out by default, because a minute of a call is about
+30 MB of base64 nobody reads; a hash of each is kept so two traces stay
+comparable. `--trace-payloads` includes them. `customParameters` values are
+redacted, because `--param` is how agents are authenticated and a trace exists
+to be sent to someone else; `--trace-secrets` opts out.
+
+Nothing is written while the call is running. A trace that changed the latency
+it was recording would not be a diagnostic.
 
 ## Simulate a bad connection
 
