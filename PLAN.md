@@ -181,8 +181,8 @@ matches the documented shape field-for-field.
 >
 > Ran, 5 findings, all fixed with regression tests in
 > `tests/test_review_gate_1.py`. See [Progress](#progress).
-> **Still owed: the by-ear check.** Round-tripped WAVs were produced and
-> handed over, but nobody has confirmed they sound right.
+> **The by-ear check is now done** (2026-09-11) -- see
+> [The by-ear check](#the-by-ear-check-done-2026-09-11).
 >
 > <details><summary>Original gate text</summary>
 >
@@ -771,10 +771,13 @@ tests/          277 passing, on Linux + Windows × Python 3.11/3.12/3.13.
 1. **Real-agent validation is owed.** Gate 2 closed against
    the echo agent and hostile stubs, which is weaker than the plan intends.
    *This is the single most important thing to do next.*
-2. **The by-ear check is owed.** Round-tripped WAVs were produced and handed
-   over; nobody has confirmed they sound right. Objective substitutes exist in
-   `tests/test_signal_integrity.py` (440 Hz returns at 440 Hz, correlation
-   > 0.99, zero-lag cross-correlation peak), but they are not a pair of ears.
+2. ~~**The by-ear check is owed.**~~ **Done, 2026-09-11.** A human listened to
+   a clip before and after a full round trip and confirmed they sound the same,
+   and that the words are intelligible. See
+   [The by-ear check](#the-by-ear-check-done-2026-09-11). The objective
+   substitutes in `tests/test_signal_integrity.py` (440 Hz returns at 440 Hz,
+   correlation > 0.99, zero-lag cross-correlation peak) stand, and now have a
+   pair of ears behind them.
 3. **Windows scheduler granularity is genuinely ~15.6 ms**, so max lateness
    sits near a full frame even on healthy runs; mean lateness is ~4 ms.
    Cumulative drift stays near zero — deadline scheduling absorbs it. Worth
@@ -932,6 +935,42 @@ because it would be undetectable, and a test tool should present the harder case
 
 **Not a finding, having been checked:** `wss://` verifies certificates, because
 `websockets` uses `ssl.create_default_context` and nothing here overrides it.
+
+## The by-ear check, done 2026-09-11
+
+*Owed since gate 1. Closed while rehearsing a demo, which is the only reason it
+finally happened -- a demo needs someone to hear the audio, and the check needs
+someone to hear the audio, and they turn out to be the same act.*
+
+Gate 1 asked for a decoded payload to be listened to, on the grounds that tests
+can pass while the audio is garbage. It was deferred, then carried as an owed
+item through four more gates. Objective substitutes were written in the
+meantime (`tests/test_signal_integrity.py`: a 440 Hz tone returns at 440 Hz,
+correlation > 0.99, the cross-correlation peak sits at zero lag) and they are
+good evidence, but none of them can tell you that speech is *intelligible*.
+
+**What was checked.** Real TTS speech -- "How much would that cost per month?"
+from `fixtures/make_speech.py` -- before and after a complete round trip:
+
+    WAV -> 8 kHz mono -> mu-law -> 160-byte frames -> base64 -> JSON
+        -> WebSocket -> echo agent -> back -> decode -> WAV
+
+**Result: the two files sound the same, and the sentence is clearly
+intelligible.** No muffling, no buzz, no pitch shift, no truncation.
+
+**This is a stronger check than gate 1 asked for**, and the difference is worth
+stating rather than letting the tick mark imply more or less than it should.
+Gate 1 wanted a codec round trip listened to. What was actually listened to is
+the codec *plus* framing, base64, the wire format, a real socket, a real agent
+and the decode path -- every stage that could plausibly corrupt audio, end to
+end. A codec-only check would not have caught a framing or base64 fault; this
+one would.
+
+**What it still does not cover.** The audio is desktop TTS, so it has no accent,
+no background noise and no trailing off mid-sentence. Real recorded human speech
+remains worth having, and remains listed above as an open item -- not because
+this check was weak, but because it is the *input* that is synthetic, not the
+measurement.
 
 ## Gate 5's first finding, from reading rather than fresh eyes
 
