@@ -36,6 +36,7 @@ from .metrics import CONVERSATIONAL_FLOW_MS, Metrics, Threshold, compute
 from .scenario import ScenarioError
 from .scenario import load as load_scenario
 from .session import SessionConfig, SessionResult
+from .trace import TraceConfig
 
 #: Exit codes. Stable, and chosen so CI can distinguish outcomes without
 #: parsing output. They are *defined* in ``api`` and re-exported here, because
@@ -94,6 +95,28 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
         help="do not echo marks back; Twilio does, and most agents expect it",
     )
     command.add_argument("--quiet", action="store_true", help="print only errors")
+    command.add_argument(
+        "--trace", type=Path, metavar="PATH",
+        help=(
+            "write every frame, both directions, as JSON Lines. This is the "
+            "artefact to attach to a bug report about the simulation itself"
+        ),
+    )
+    command.add_argument(
+        "--trace-payloads", action="store_true",
+        help=(
+            "include the base64 audio in the trace. Off by default: a minute "
+            "of audio is about 30 MB of base64 that nobody reads"
+        ),
+    )
+    command.add_argument(
+        "--trace-secrets", action="store_true",
+        help=(
+            "include start.customParameters values in the trace. Off by "
+            "default, because --param is how agents are authenticated and a "
+            "trace exists to be sent to someone else"
+        ),
+    )
     command.add_argument(
         "--json", action="store_true",
         help="emit metrics as JSON on stdout instead of a human summary",
@@ -238,6 +261,17 @@ def thresholds_from(args: argparse.Namespace) -> list[Threshold]:
             )
         )
     return thresholds
+
+
+def trace_from(args: argparse.Namespace) -> TraceConfig | None:
+    """Build the trace configuration, or None when --trace was not given."""
+    if not args.trace:
+        return None
+    return TraceConfig(
+        path=args.trace,
+        payloads=args.trace_payloads,
+        secrets=args.trace_secrets,
+    )
 
 
 def config_from(args: argparse.Namespace, params: dict[str, str]) -> SessionConfig:
@@ -409,6 +443,8 @@ def render(args: argparse.Namespace, call_report: CallReport) -> int:
         report(result, call_report.metrics, call_report.thresholds)
         if args.out and result.audio_received:
             print(f"\nwrote {args.out} ({result.audio_duration_s:.2f}s)")
+        if call_report.trace_path:
+            print(f"wrote {call_report.trace_path} (frame trace)")
 
     return call_report.exit_code
 
@@ -442,6 +478,7 @@ async def run_call_command(args: argparse.Namespace) -> int:
             frames=frames,
             config=config_from(args, params),
             thresholds=thresholds_from(args),
+            trace=trace_from(args),
         )
     except ConnectionFailed as exc:
         print(f"streamdouble: {exc}", file=sys.stderr)
@@ -474,6 +511,7 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
             script,
             config=config_from(args, params),
             thresholds=thresholds_from(args),
+            trace=trace_from(args),
         )
     except ConnectionFailed as exc:
         print(f"streamdouble: {exc}", file=sys.stderr)

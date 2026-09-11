@@ -29,7 +29,7 @@ that as a fast reply.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +38,7 @@ from .metrics import Metrics, Threshold, ThresholdResult, compute, evaluate_thre
 from .scenario import Scenario
 from .scenario import load as load_scenario
 from .session import Session, SessionConfig, SessionResult
+from .trace import Trace, TraceConfig
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Sequence
@@ -46,6 +47,7 @@ __all__ = [
     "CallError",
     "CallReport",
     "ConnectionFailed",
+    "TraceConfig",
     "call",
     "call_sync",
     "run_scenario",
@@ -90,6 +92,8 @@ class CallReport:
     result: SessionResult
     metrics: Metrics
     thresholds: list[ThresholdResult] = field(default_factory=list)
+    #: Where the frame trace was written, if one was requested.
+    trace_path: Path | None = None
 
     # ------------------------------------------------------------------
     # The handful of things people actually assert on, forwarded so a test
@@ -177,18 +181,33 @@ class CallReport:
         return payload
 
 
-async def _run(session: Session, url: str, thresholds: Sequence[Threshold] | None) -> CallReport:
-    """Run a prepared session and turn it into a report."""
+async def _run(
+    session: Session,
+    url: str,
+    thresholds: Sequence[Threshold] | None,
+    trace: Trace | None = None,
+) -> CallReport:
+    """Run a prepared session and turn it into a report.
+
+    The trace is flushed in a ``finally``: a call that ended badly is the one
+    whose trace is worth having, and a diagnostic that only survives success is
+    no diagnostic at all.
+    """
     try:
-        result = await session.run()
-    except (OSError, TimeoutError) as exc:
-        raise ConnectionFailed(f"could not connect to {url}: {exc}") from exc
+        try:
+            result = await session.run()
+        except (OSError, TimeoutError) as exc:
+            raise ConnectionFailed(f"could not connect to {url}: {exc}") from exc
+    finally:
+        if trace is not None:
+            trace.flush()
 
     metrics = compute(result)
     return CallReport(
         result=result,
         metrics=metrics,
         thresholds=evaluate_thresholds(metrics, list(thresholds or [])),
+        trace_path=trace.config.path if trace is not None else None,
     )
 
 
@@ -199,6 +218,7 @@ async def call(
     frames: Sequence[bytes] | None = None,
     config: SessionConfig | None = None,
     thresholds: Sequence[Threshold] | None = None,
+    trace: TraceConfig | None = None,
 ) -> CallReport:
     """Place one simulated call and return what it produced.
 
@@ -228,8 +248,9 @@ async def call(
         if not frames:
             raise ValueError(f"{audio_path} contains no audio")
 
+    config, recorder = _with_trace(config, trace)
     session = Session(url, frames, config=config)
-    return await _run(session, url, thresholds)
+    return await _run(session, url, thresholds, recorder)
 
 
 async def run_scenario(
@@ -238,6 +259,7 @@ async def run_scenario(
     *,
     config: SessionConfig | None = None,
     thresholds: Sequence[Threshold] | None = None,
+    trace: TraceConfig | None = None,
 ) -> CallReport:
     """Run a scripted call and return what it produced.
 
@@ -251,8 +273,26 @@ async def run_scenario(
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
 
+    config, recorder = _with_trace(config, trace)
     session = Session(url, scenario=scenario, config=config)
-    return await _run(session, url, thresholds)
+    return await _run(session, url, thresholds, recorder)
+
+
+def _with_trace(
+    config: SessionConfig | None, trace: TraceConfig | None
+) -> tuple[SessionConfig, Trace | None]:
+    """Attach a recorder to a copy of the config, never to the caller's own.
+
+    ``SessionConfig`` is routinely shared between calls -- this project's own
+    tests define one at module level and reuse it -- so mutating it here would
+    make every later call write to the first call's trace file.
+    """
+    base = config or SessionConfig()
+    if trace is None:
+        return base, None
+
+    recorder = Trace(config=trace)
+    return replace(base, trace=recorder), recorder
 
 
 def _refuse_inside_a_loop(sync_name: str, async_name: str) -> None:
