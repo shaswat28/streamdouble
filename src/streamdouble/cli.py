@@ -4,10 +4,12 @@ The product is the CLI and CI, so this file is a user-facing surface rather than
 a thin wrapper: what it prints, and what it exits with, is most of what anyone
 will ever see of this package.
 
-Phase 2 scope is the ``call`` command. Threshold flags, ``--json``, and the full
-exit-code contract arrive with the metrics layer in Phase 3; the exit codes
-defined here are the subset that is already meaningful, and they keep their
-meanings when the rest are added.
+It does not, however, know how to place a call. That lives in ``api.py``, and
+this module parses arguments, renders a report and picks an exit code. The
+split is deliberate: `streamdouble scenario` parsed correctly and then died
+with "unknown command" for its whole life in a public repository because the
+command line had a code path of its own that no test exercised. One
+implementation, two front ends.
 """
 
 from __future__ import annotations
@@ -18,30 +20,44 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, audio
-from .chaos import Impairments
-from .metrics import (
-    CONVERSATIONAL_FLOW_MS,
-    Metrics,
-    Threshold,
-    compute,
-    evaluate_thresholds,
+from . import __version__, api, audio
+from .api import (
+    EXIT_ASSERTION_FAILED,
+    EXIT_CONNECTION_FAILED,
+    EXIT_OK,
+    EXIT_PROTOCOL_VIOLATION,
+    EXIT_TIMEOUT,
+    EXIT_USAGE,
+    CallReport,
+    ConnectionFailed,
 )
+from .chaos import Impairments
+from .metrics import CONVERSATIONAL_FLOW_MS, Metrics, Threshold, compute
 from .scenario import ScenarioError
 from .scenario import load as load_scenario
-from .session import Session, SessionConfig, SessionResult
-
-__all__ = ["build_parser", "main"]
+from .session import SessionConfig, SessionResult
 
 #: Exit codes. Stable, and chosen so CI can distinguish outcomes without
-#: parsing output. Reserved for their Phase 3 meanings from the start, so that
-#: nothing which works today changes meaning later.
-EXIT_OK = 0
-EXIT_ASSERTION_FAILED = 1
-EXIT_TIMEOUT = 2
-EXIT_PROTOCOL_VIOLATION = 3
-EXIT_USAGE = 4
-EXIT_CONNECTION_FAILED = 5
+#: parsing output. They are *defined* in ``api`` and re-exported here, because
+#: they are part of the CLI's documented contract and ``cli.EXIT_TIMEOUT`` is
+#: what existing callers and tests import -- but there must be exactly one
+#: definition, or the API and the command line could disagree about what a run
+#: meant.
+#:
+#: They are named in ``__all__`` so that a linter's unused-import pass sees a
+#: re-export rather than dead code and removes them. That is not hypothetical:
+#: it happened during the refactor that introduced this module, and every
+#: exit-code test went red at once.
+__all__ = [
+    "EXIT_ASSERTION_FAILED",
+    "EXIT_CONNECTION_FAILED",
+    "EXIT_OK",
+    "EXIT_PROTOCOL_VIOLATION",
+    "EXIT_TIMEOUT",
+    "EXIT_USAGE",
+    "build_parser",
+    "main",
+]
 
 
 def _add_shared_options(command: argparse.ArgumentParser) -> None:
@@ -358,76 +374,43 @@ def report(
 def exit_code_for(result: SessionResult, outcomes: list | None = None) -> int:
     """Map a call outcome to an exit code.
 
-    Ordered by severity, most definite first. A protocol violation is a certain
-    bug; a timeout is a specific, informative outcome; a failed threshold is a
-    judgement about a number that was measured successfully. Reporting the
-    vaguest of the three when a more specific one applies would lose
-    information a pipeline could have acted on.
+    Kept as a function because tests and downstream code import it. The logic
+    itself is :attr:`streamdouble.api.CallReport.exit_code` -- this builds the
+    smallest report that can answer the question rather than reimplementing it,
+    so the two can never disagree.
     """
-    if result.violations:
-        return EXIT_PROTOCOL_VIOLATION
-    if result.timed_out:
-        return EXIT_TIMEOUT
-    if result.failed_expectations:
-        return EXIT_ASSERTION_FAILED
-    if any(not outcome.passed for outcome in outcomes or []):
-        return EXIT_ASSERTION_FAILED
-    return EXIT_OK
+    return CallReport(result=result, metrics=compute(result), thresholds=outcomes or []).exit_code
 
 
-async def place_call(args: argparse.Namespace, session: Session, banner: str) -> int:
-    """Run a prepared session and report it. Shared by `call` and `scenario`."""
-    if not args.quiet and not args.json:
-        print(banner)
+def render(args: argparse.Namespace, call_report: CallReport) -> int:
+    """Render a finished call and return its exit code.
 
-    try:
-        result = await session.run()
-    except (OSError, TimeoutError) as exc:
-        # Covers a refused connection, an unresolvable host, and a handshake
-        # that never completed -- from the user's point of view one situation:
-        # the agent is not reachable at that URL.
-        print(f"streamdouble: could not connect to {args.url}: {exc}", file=sys.stderr)
-        return EXIT_CONNECTION_FAILED
+    Everything this function does is presentation. It computes nothing about
+    the call -- the numbers, the threshold outcomes and the exit code all
+    arrive already decided on the report -- so the CLI cannot report something
+    the API would not.
+    """
+    result = call_report.result
 
-    metrics = compute(result)
-    outcomes = evaluate_thresholds(metrics, thresholds_from(args))
-
-    if args.out:
-        if not result.audio_received:
-            print(
-                f"streamdouble: no audio received, so {args.out} was not written",
-                file=sys.stderr,
-            )
-        else:
-            audio.ulaw_to_wav(result.audio_received, args.out)
+    if args.out and not api.save_reply(call_report, args.out):
+        # An agent that never spoke leaves no file at all, rather than a
+        # zero-length WAV that looks like a successful recording of silence.
+        print(
+            f"streamdouble: no audio received, so {args.out} was not written",
+            file=sys.stderr,
+        )
 
     if args.json:
         # JSON goes to stdout alone, so a pipeline can consume it directly
         # without having to strip a human preamble. Everything else this
         # command says in --json mode goes to stderr.
-        payload = metrics.to_dict()
-        payload["stream_sid"] = result.identity.stream_sid
-        payload["frames_dropped"] = result.frames_dropped
-        payload["expectations"] = [
-            {"what": what, "passed": passed} for what, passed in result.expectations
-        ]
-        payload["thresholds"] = [
-            {
-                "name": outcome.threshold.name,
-                "limit_ms": outcome.threshold.limit,
-                "value_ms": None if outcome.value is None else round(outcome.value, 1),
-                "passed": outcome.passed,
-            }
-            for outcome in outcomes
-        ]
-        payload["exit_code"] = exit_code_for(result, outcomes)
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(call_report.to_dict(), indent=2))
     elif not args.quiet:
-        report(result, metrics, outcomes)
+        report(result, call_report.metrics, call_report.thresholds)
         if args.out and result.audio_received:
             print(f"\nwrote {args.out} ({result.audio_duration_s:.2f}s)")
 
-    return exit_code_for(result, outcomes)
+    return call_report.exit_code
 
 
 async def run_call_command(args: argparse.Namespace) -> int:
@@ -447,12 +430,24 @@ async def run_call_command(args: argparse.Namespace) -> int:
         print(f"streamdouble: {args.audio} contains no audio", file=sys.stderr)
         return EXIT_USAGE
 
-    session = Session(args.url, frames, config=config_from(args, params))
-    banner = (
-        f"calling {args.url} with {len(frames)} frames "
-        f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio)"
-    )
-    return await place_call(args, session, banner)
+    if not args.quiet and not args.json:
+        print(
+            f"calling {args.url} with {len(frames)} frames "
+            f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio)"
+        )
+
+    try:
+        call_report = await api.call(
+            args.url,
+            frames=frames,
+            config=config_from(args, params),
+            thresholds=thresholds_from(args),
+        )
+    except ConnectionFailed as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_CONNECTION_FAILED
+
+    return render(args, call_report)
 
 
 async def run_scenario_command(args: argparse.Namespace) -> int:
@@ -470,8 +465,21 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
         print(f"streamdouble: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    session = Session(args.url, scenario=script, config=config_from(args, params))
-    return await place_call(args, session, script.describe())
+    if not args.quiet and not args.json:
+        print(script.describe())
+
+    try:
+        call_report = await api.run_scenario(
+            args.url,
+            script,
+            config=config_from(args, params),
+            thresholds=thresholds_from(args),
+        )
+    except ConnectionFailed as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_CONNECTION_FAILED
+
+    return render(args, call_report)
 
 
 #: Subcommand name to the coroutine that runs it.
