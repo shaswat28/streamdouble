@@ -51,6 +51,12 @@ dev = [
 [project.scripts]
 streamdouble = "streamdouble.cli:main"
 
+# Installing the package is enough to get the fixtures -- no pytest_plugins
+# line to add, which is one less step between someone installing this and
+# writing their first test.
+[project.entry-points.pytest11]
+streamdouble = "streamdouble.pytest_plugin"
+
 [project.urls]
 Homepage = "https://github.com/shaswat28/streamdouble"
 Issues = "https://github.com/shaswat28/streamdouble/issues"
