@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Trace", "TraceConfig"]
+__all__ = ["MAX_TRACE_PAYLOAD_BYTES", "MAX_TRACE_RECORDS", "Trace", "TraceConfig"]
 
 #: How many hex characters of the payload digest to keep. Eight is enough to
 #: tell two frames apart in a diff and short enough to stay readable; this is
@@ -49,6 +49,26 @@ _DIGEST_CHARS = 8
 #: string: a reader must be able to tell "this was withheld" from "this was
 #: absent", because those are different bug reports.
 REDACTED = "<redacted>"
+
+#: Most frames to retain. Beyond this the trace stops growing and says so.
+#:
+#: Gate 4 measured a flooding endpoint driving 206 MB of buffered audio and
+#: 436 MB of peak memory in a five-second call, and capped both the audio and
+#: the event log in response. The trace arrived afterwards with no cap at all
+#: and reopened the same vector: a record is roughly a kilobyte, so a ten
+#: minute call accumulates tens of megabytes, and with ``payloads=True``
+#: against that same endpoint each record carries a ~533 KB base64 string.
+#:
+#: 100_000 frames is over half an hour of a call in both directions, which is
+#: past the point where anyone reads a trace line by line anyway.
+MAX_TRACE_RECORDS = 100_000
+
+#: Most payload bytes to retain in total, when ``payloads=True``.
+#:
+#: Separate from the record cap because the record cap does not bound this:
+#: gate 4's endpoint sends few frames and enormous ones, so a count-based limit
+#: alone lets a handful of records carry hundreds of megabytes.
+MAX_TRACE_PAYLOAD_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -68,6 +88,19 @@ class Trace:
 
     config: TraceConfig
     records: list[dict[str, Any]] = field(default_factory=list)
+    #: Frames seen after the cap was reached. Counted exactly even though they
+    #: are not retained, because "the trace stops at 100,000" and "your agent
+    #: sent 4 million frames" are different facts and the second one is the
+    #: interesting one.
+    dropped: int = 0
+    #: Payload bytes retained so far, against MAX_TRACE_PAYLOAD_BYTES.
+    _payload_bytes: int = 0
+
+    def _room_for_another(self) -> bool:
+        if len(self.records) >= MAX_TRACE_RECORDS:
+            self.dropped += 1
+            return False
+        return True
 
     def note_out(self, frame: dict[str, Any], at: float) -> None:
         """Record a frame this process sent to the agent.
@@ -77,7 +110,8 @@ class Trace:
         happened. Every timestamp in a trace comes from the same clock as the
         metrics, which is what makes the two comparable.
         """
-        self.records.append(self._describe(frame, "out", at))
+        if self._room_for_another():
+            self.records.append(self._describe(frame, "out", at))
 
     def note_in(self, raw: str | bytes, at: float, *, parsed: dict[str, Any] | None = None) -> None:
         """Record a frame the agent sent to this process.
@@ -89,6 +123,9 @@ class Trace:
         """
         if parsed is None:
             parsed = _try_parse(raw)
+
+        if not self._room_for_another():
+            return
 
         if parsed is None:
             self.records.append(
@@ -127,7 +164,16 @@ class Trace:
                 record["bytes"] = len(payload)
                 record["sha256_8"] = _digest(payload)
                 if self.config.payloads:
-                    record["payload"] = payload
+                    # The record cap does not bound this on its own: gate 4's
+                    # endpoint sends few frames and enormous ones, so a
+                    # count-based limit lets a handful of records carry
+                    # hundreds of megabytes. The digest above is kept either
+                    # way, so a truncated trace stays comparable.
+                    if self._payload_bytes + len(payload) <= MAX_TRACE_PAYLOAD_BYTES:
+                        record["payload"] = payload
+                        self._payload_bytes += len(payload)
+                    else:
+                        record["payload_omitted"] = "payload cap reached"
 
         if isinstance(mark := frame.get("mark"), dict):
             record["mark"] = mark.get("name")
@@ -158,7 +204,20 @@ class Trace:
 
         Called once, after the socket is closed, so the cost lands where it
         cannot affect a measurement.
+
+        Raises whatever the filesystem raises. :func:`streamdouble.api.call`
+        is responsible for not letting that destroy a call -- see the note
+        there about why a diagnostic must never be able to do that.
         """
+        if self.dropped:
+            self.records.append(
+                {
+                    "dir": "note",
+                    "truncated": True,
+                    "retained": len(self.records),
+                    "dropped": self.dropped,
+                }
+            )
         self.config.path.parent.mkdir(parents=True, exist_ok=True)
         with self.config.path.open("w", encoding="utf-8", newline="\n") as handle:
             for record in self.records:

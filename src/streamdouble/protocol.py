@@ -416,6 +416,20 @@ class InboundMedia:
 
     stream_sid: str
     payload: bytes
+    #: The frame exactly as it arrived, after JSON decoding.
+    #:
+    #: Carried so that a caller wanting the whole frame -- the trace does --
+    #: does not have to parse the message a second time. Gate 6 found exactly
+    #: that duplication costing a JSON decode per inbound frame inside the
+    #: receive loop, and real agents batch audio into ~8000-byte frames.
+    #:
+    #: Defaults to an empty dict so that existing constructions and the many
+    #: tests building these directly keep working unchanged, and is excluded
+    #: from equality and repr: two media frames carrying the same payload for
+    #: the same stream are the same frame, whatever dict they came out of.
+    #: Without `compare=False` every existing test that asserts on a whole
+    #: parsed frame breaks -- which is how this was found.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -424,6 +438,8 @@ class InboundMark:
 
     stream_sid: str
     name: str
+    #: The frame as it arrived. See :attr:`InboundMedia.raw`.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -431,6 +447,8 @@ class InboundClear:
     """A request to discard buffered audio -- the caller interrupted."""
 
     stream_sid: str
+    #: The frame as it arrived. See :attr:`InboundMedia.raw`.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -511,7 +529,9 @@ def parse_outbound(
             )
 
     if event == "media":
-        return InboundMedia(stream_sid=stream_sid, payload=_decode_payload(data, excerpt))
+        return InboundMedia(
+            stream_sid=stream_sid, payload=_decode_payload(data, excerpt), raw=data
+        )
     if event == "mark":
         mark = data.get("mark")
         name = mark.get("name") if isinstance(mark, dict) else None
@@ -519,9 +539,9 @@ def parse_outbound(
             raise ProtocolViolation(
                 "malformed_mark", "'mark' frame is missing mark.name", raw=excerpt
             )
-        return InboundMark(stream_sid=stream_sid, name=name)
+        return InboundMark(stream_sid=stream_sid, name=name, raw=data)
     if event == "clear":
-        return InboundClear(stream_sid=stream_sid)
+        return InboundClear(stream_sid=stream_sid, raw=data)
 
     return UnknownFrame(event=event, raw=data)
 

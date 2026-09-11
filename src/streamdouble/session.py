@@ -600,10 +600,18 @@ class Session:
         Every outbound frame goes through here so that tracing cannot miss one.
         The trace call is a list append -- deliberately not a write -- because
         this runs on the event loop alongside the pacer.
+
+        The frame is stamped before the send and recorded after it. Stamping
+        first keeps the trace on the same timeline as the metrics; recording
+        after means a frame whose send raised is not written down as though it
+        went out. Gate 6 found the earlier version claiming exactly that, and
+        the frame it lied about was the last one before a disconnect -- which
+        is the one someone opens a trace to look at.
         """
-        if self.config.trace is not None:
-            self.config.trace.note_out(frame, self.clock())
+        at = self.clock()
         await connection.send(_dumps(frame))
+        if self.config.trace is not None:
+            self.config.trace.note_out(frame, at)
 
     def _handle_message(self, message: str | bytes) -> None:
         """Parse and account for one frame from the agent."""
@@ -615,13 +623,6 @@ class Session:
         # systematic bias correlated with agent behaviour, and it contradicts
         # the convention metrics.py documents: arrival, not decode completion.
         arrived_at = self.clock()
-
-        # Traced before parsing, and from the raw message, so that a frame
-        # which fails to parse still appears. A malformed frame is the single
-        # most valuable thing a trace can hold, and one that recorded only
-        # well-formed frames would omit exactly the case being reported.
-        if self.config.trace is not None:
-            self.config.trace.note_in(message, arrived_at)
 
         try:
             parsed = parse_outbound(message, expected_stream_sid=self.encoder.identity.stream_sid)
@@ -635,7 +636,22 @@ class Session:
             self._record(
                 "violation", at=arrived_at, code=violation.code, message=str(violation)
             )
+            # Traced from the raw message, because a frame that failed to parse
+            # is the single most valuable thing a trace can hold and one that
+            # recorded only well-formed frames would omit exactly the case
+            # being reported.
+            if self.config.trace is not None:
+                self.config.trace.note_in(message, arrived_at)
             return
+
+        # Hand the already-parsed frame to the trace rather than letting it
+        # run json.loads a second time. Gate 6 found the duplicate: real agents
+        # batch outbound audio into ~8000-byte frames, JSON decode of a large
+        # payload was measured at 0.32 ms back at gate 3, and doubling that
+        # lands inside the receive loop next to the pacer -- the precise
+        # "observer perturbs the observed" cost this design exists to avoid.
+        if self.config.trace is not None:
+            self.config.trace.note_in(message, arrived_at, parsed=parsed.raw)
 
         if isinstance(parsed, InboundMedia):
             self._handle_media(parsed, arrived_at)
