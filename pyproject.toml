@@ -83,4 +83,29 @@ filterwarnings = [
   # audioop announces its own removal on import. Only the codec parity test
   # imports it, and only to check this package does not need it.
   "ignore:'audioop' is deprecated:DeprecationWarning",
+  # pytest-asyncio builds a fresh event loop per test. On Windows a
+  # ProactorEventLoop owns a self-pipe socketpair, and tearing down hundreds of
+  # them leaves the occasional one for the garbage collector, which surfaces as
+  # an unraisable ResourceWarning -- reported against whichever unrelated test
+  # happened to be running when GC fired.
+  #
+  # Ignored only after measuring that it is not ours: 20 consecutive in-process
+  # calls, each under its own asyncio.run, leave zero unclosed loops and no
+  # socket growth at all. That measurement is kept as
+  # tests/test_no_resource_leaks.py rather than being a one-off.
+  #
+  # Stated precisely, because the honest version is weaker than the tidy one:
+  # those tests are regression *guards*, not mutation-verified detectors. No
+  # mutation could be constructed that they catch -- deleting one
+  # `connection.close()` is covered by another, and deleting all three makes
+  # calls hang rather than leak. They pin "this does not grow", which is what
+  # the warning was accidentally providing and is worth keeping; they are not
+  # proof that every future leak is catchable.
+  # Narrow on purpose: these two messages and no others. An unraisable
+  # exception of any other shape still fails the suite, which is the whole
+  # reason unraisable reporting is worth having.
+  # The `.` after "in" matches the colon: pytest splits these filter strings on
+  # ":", so a literal colon in the message pattern would end the field early.
+  "ignore:Exception ignored in. <function BaseEventLoop.__del__:pytest.PytestUnraisableExceptionWarning",
+  "ignore:Exception ignored in. <socket.socket:pytest.PytestUnraisableExceptionWarning",
 ]
