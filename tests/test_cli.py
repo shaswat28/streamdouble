@@ -11,6 +11,7 @@ principle and wrong against a live agent is not worth much.
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import subprocess
@@ -439,3 +440,85 @@ def test_json_renders_silence_as_null(server):
     payload = json.loads(completed.stdout)
     assert payload["time_to_first_audio_ms"] is None
     assert payload["timed_out"] is True
+
+
+# --------------------------------------------------------------------------
+# The scenario subcommand
+# --------------------------------------------------------------------------
+
+
+def test_every_subcommand_has_a_runner():
+    """The parser and the dispatch table agree.
+
+    `streamdouble scenario` parsed happily and then died with "unknown command"
+    for its whole life in a public repository, because every scenario test drove
+    `Session(scenario=...)` rather than the CLI. The feature was in the README
+    and unreachable from the command line.
+
+    Asserted as an invariant between the two rather than as one test per
+    subcommand, so the next subcommand added without a runner fails here instead
+    of shipping.
+    """
+    [subcommands] = [
+        action for action in cli.build_parser()._actions
+        if isinstance(action, argparse._SubParsersAction)
+    ]
+    assert set(subcommands.choices) == set(cli.RUNNERS)
+
+
+@pytest.mark.timeout(120)
+def test_the_scenario_subcommand_runs_a_scenario(server, tmp_path):
+    """End to end through the CLI, not through the Python API.
+
+    The regression test for the dispatch bug: this fails with exit 4 and
+    "unknown command 'scenario'" against the broken version.
+    """
+    scenario_file = tmp_path / "quick.yaml"
+    scenario_file.write_text(
+        "name: quick\n"
+        "steps:\n"
+        f"  - say: {Path('fixtures/speech_8k.wav').resolve().as_posix()}\n"
+        "  - wait: 0.2\n"
+    )
+
+    completed = run_cli(
+        ["scenario", str(scenario_file), server, "--quiet-period", "0.3", "--json"]
+    )
+    assert completed.returncode == cli.EXIT_OK, completed.stderr
+
+    payload = json.loads(completed.stdout)
+    assert payload["frames_sent"] > 0
+
+
+@pytest.mark.timeout(60)
+def test_a_broken_scenario_is_rejected_before_connecting(server, tmp_path):
+    """A bad scenario exits 4 without opening a socket.
+
+    Validation happens up front precisely so a typo cannot fail halfway through
+    a call with the agent left mid-sentence.
+    """
+    scenario_file = tmp_path / "broken.yaml"
+    scenario_file.write_text("steps:\n  - wiat: 1\n")
+
+    completed = run_cli(["scenario", str(scenario_file), server, "--quiet"])
+    assert completed.returncode == cli.EXIT_USAGE
+    assert "wiat" in completed.stderr
+
+
+@pytest.mark.timeout(60)
+def test_a_failed_expectation_exits_one(server, tmp_path):
+    """A scenario is a CI check: a missed `expect` fails the run."""
+    scenario_file = tmp_path / "expects.yaml"
+    scenario_file.write_text(
+        "steps:\n"
+        f"  - say: {Path('fixtures/speech_8k.wav').resolve().as_posix()}\n"
+        "  - expect: clear\n"
+    )
+
+    completed = run_cli(
+        ["scenario", str(scenario_file), server, "--quiet-period", "0.3", "--json"]
+    )
+    assert completed.returncode == cli.EXIT_ASSERTION_FAILED, completed.stderr
+
+    payload = json.loads(completed.stdout)
+    assert payload["expectations"] == [{"what": "expect clear", "passed": False}]

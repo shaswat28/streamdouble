@@ -74,9 +74,16 @@ way, and one of them found that a fix had introduced a new bug.
 
 ## Adding a scenario
 
-Scenarios in `scenarios/` are examples as much as tests. Keep clips small and
-committed alongside, and write the comments for someone who has not read the
-source.
+Scenarios in `scenarios/` are examples as much as tests. Keep clips small, and
+write the comments for someone who has not read the source.
+
+If the scenario depends on the agent *understanding* the caller — barge-in,
+anything answering a question — it needs real speech. Use
+`python fixtures/make_speech.py`, which synthesises transcribable clips from the
+OS's own TTS into the gitignored `fixtures/speech/`. The committed synthetic
+fixtures are speech-like and no transcription service will turn them into words,
+so a scenario driven by one fails for reasons that have nothing to do with the
+agent under test.
 
 ## What is out of scope
 
