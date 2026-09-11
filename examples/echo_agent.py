@@ -32,7 +32,18 @@ import json
 import time
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+try:
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+except ImportError:  # pragma: no cover - a setup problem, not a code path
+    # A bare ModuleNotFoundError here is a bad first impression: this is the
+    # very first command someone with no voice agent of their own runs, and
+    # `pip install streamdouble` deliberately does not pull in a web framework
+    # just to serve an example.
+    raise SystemExit(
+        "examples/echo_agent.py needs FastAPI and uvicorn, which streamdouble "
+        "does not install on its own.\n\n"
+        "    pip install 'streamdouble[example]'\n"
+    ) from None
 
 app = FastAPI(title="streamdouble echo agent")
 

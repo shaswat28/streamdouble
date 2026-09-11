@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "streamdouble"
-version = "0.1.0"
+version = "0.1.1"
 description = "A framework-agnostic Twilio Media Streams simulator. Test your voice agent's WebSocket endpoint locally, at full protocol fidelity, without placing a real call."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,10 @@ dependencies = [
 
 [project.optional-dependencies]
 resample = ["soxr>=0.3.7"]
+# Just what examples/echo_agent.py needs. Someone with no voice agent of their
+# own installs this to have something to call, and without it the first command
+# in the README's quickstart is a ModuleNotFoundError.
+example = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
