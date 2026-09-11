@@ -25,33 +25,28 @@ is exactly the seam no existing tool exercises.
 `streamdouble` does one thing: it lies to your WebSocket endpoint convincingly
 enough that your agent cannot tell it isn't Twilio.
 
+**It says nothing about whether your agent is any good.** No transcript scoring,
+no personas, no LLM-as-judge, no conversation simulation. It tests the transport
+underneath all of that: framing, timing, protocol conformance, and what happens
+on a bad line. If you want to know whether your agent handles an angry customer,
+[other tools do that better](#how-this-compares) — this is the layer beneath
+them.
+
 ## Try it
 
-Two terminals. No Twilio account, no tunnel, no phone.
+No Twilio account, no tunnel, no phone.
 
 ```bash
 pip install streamdouble
 ```
 
-Point it at your agent, with any WAV as the caller's voice:
+Point it at your agent, with any WAV file as the caller's voice:
 
 ```bash
 streamdouble call ws://localhost:8000/media-stream --audio hello.wav --out reply.wav
 ```
 
-`reply.wav` is what your agent said back.
-
-**No voice agent yet?** Clone this repository — it ships one to talk to, plus
-the audio fixtures:
-
-```bash
-git clone https://github.com/shaswat28/streamdouble && cd streamdouble
-python examples/echo_agent.py --port 8000          # terminal one
-```
-
-```bash
-streamdouble call ws://localhost:8000/media-stream   --audio fixtures/speech_8k.wav --out reply.wav   # terminal two
-```
+`reply.wav` is what your agent said back — open it and listen.
 
 ```
   stream        MZdcedc700bccdb1f93f6b3334c79dcfa2
@@ -65,10 +60,49 @@ streamdouble call ws://localhost:8000/media-stream   --audio fixtures/speech_8k.
 wrote reply.wav (2.00s)
 ```
 
+**first audio** is the one to watch: how long the caller waits before hearing
+anything. **marks** are Twilio's playback checkpoints — an agent sends one to
+ask "has the caller actually heard this yet?", and a reply that never comes back
+is why some agents hang. **pacing** is streamdouble reporting on itself, so you
+can tell a slow agent from a slow measurement.
+
+<details>
+<summary><b>No voice agent to point it at yet?</b></summary>
+
+This repository ships one, along with the audio to feed it. You need the clone
+for the example agent, the fixtures and the scenarios; the published package is
+just the tool itself.
+
+```bash
+git clone https://github.com/shaswat28/streamdouble
+cd streamdouble
+pip install -e ".[example]"
+```
+
+Then, in one terminal:
+
+```bash
+python examples/echo_agent.py --port 8000
+```
+
+and in another:
+
+```bash
+streamdouble call ws://localhost:8000/media-stream \
+  --audio fixtures/speech_8k.wav --out reply.wav
+```
+
+The example agent can misbehave on purpose, which is how you see what a failure
+looks like. Add `?mode=silent` to the URL for an agent that never answers, or
+`?delay_ms=2000` for a slow one; `hangup_after=`, `garbage_after=` and
+`clear_after=` are also there.
+
+</details>
+
 ## Use it as a CI gate
 
 ```bash
-streamdouble call ws://localhost:8000/media-stream --audio fixtures/speech_8k.wav --max-first-audio-ms 800 --json
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \n  --max-first-audio-ms 800 --json
 ```
 
 ```json
@@ -116,9 +150,6 @@ Where 800 ms comes from: human turn-taking gaps cluster at
 thumb for voice agents rather than a research finding — `metrics.py` says so
 too, rather than borrowing the paper's authority for it.
 
-The example agent can misbehave on purpose, via query parameters:
-`mode=silent`, `delay_ms=`, `hangup_after=`, `garbage_after=`, `clear_after=`.
-
 ## Script a whole call
 
 A single clip is one test. The bugs live in the timing *between* things — the
@@ -135,10 +166,16 @@ steps:
   - wait: 1.0
 ```
 
+Scenarios and their clips live next to each other, so this one runs from a
+clone of this repository:
+
 ```bash
 python fixtures/make_speech.py     # once: real speech, from your OS's own TTS
 streamdouble scenario scenarios/barge_in.yaml ws://localhost:8000/media-stream
 ```
+
+For your own project, write the YAML wherever you like and keep the clips
+beside it — `say:` paths resolve relative to the scenario file.
 
 **Barge-in needs real speech, and this is the trap.** Most agents trigger
 barge-in when their transcription service produces words. The synthetic
@@ -166,7 +203,8 @@ the test tool.
 ## Simulate a bad connection
 
 ```bash
-streamdouble call ws://localhost:8000/media-stream --audio hello.wav   --packet-loss 0.05 --jitter 40 --latency 120 --chaos-seed 7
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --packet-loss 0.05 --jitter 40 --latency 120 --chaos-seed 7
 ```
 
 Impairments are seeded, so a run that finds a bug replays exactly — pass the
@@ -242,14 +280,6 @@ queued before it has finished playing to the caller, and many agents gate
 turn-taking on that echo — so `streamdouble` models a playback clock and echoes
 each mark when its audio would have drained. A `clear` discards the buffer *and*
 the marks queued behind it, because that audio is never going to play.
-
-**What it does not do** (each is a crowded market of its own):
-
-- LLM-as-judge or transcript scoring
-- Multi-turn conversation simulation
-- A web UI or dashboard
-- Being a voice agent framework
-- Replacing ngrok for webhook testing
 
 ## Development
 
