@@ -59,6 +59,7 @@ from .scenario import (
     Wait,
     WaitFor,
 )
+from .trace import Trace
 
 __all__ = [
     "Session",
@@ -243,6 +244,12 @@ class SessionConfig:
     #: Seed for the impairment decisions. Fixed by default so a chaos run is
     #: reproducible: when a bad network finds a bug, the seed is the repro.
     chaos_seed: int = 0
+    #: Where to record every frame, in both directions. ``None`` disables it.
+    #:
+    #: The trace is accumulated in memory and written once the socket is
+    #: closed, never during the call -- see ``trace.py`` for why that is not
+    #: merely an optimisation.
+    trace: Trace | None = None
 
 
 class Session:
@@ -416,7 +423,7 @@ class Session:
         if self.encoder.started and not self.encoder.stopped:
             with contextlib.suppress(websockets.ConnectionClosed, TimeoutError):
                 await asyncio.wait_for(
-                    connection.send(_dumps(self.encoder.stop())),
+                    self._send(connection, self.encoder.stop()),
                     timeout=STOP_SEND_TIMEOUT_S,
                 )
                 self._record("sent_stop")
@@ -431,8 +438,8 @@ class Session:
 
     async def _send_stream(self, connection: Any) -> None:
         """Send ``connected``, ``start``, then run the caller's script."""
-        await connection.send(_dumps(self.encoder.connected()))
-        await connection.send(_dumps(self.encoder.start(**_start_kwargs(self.config))))
+        await self._send(connection, self.encoder.connected())
+        await self._send(connection, self.encoder.start(**_start_kwargs(self.config)))
 
         self.result.started_at = self.pacer.start()
         self._record("stream_started", impairments=self.network.impairments.describe())
@@ -467,7 +474,7 @@ class Session:
 
         elif isinstance(step, Dtmf):
             for digit in step.digits:
-                await connection.send(_dumps(self.encoder.dtmf(digit)))
+                await self._send(connection, self.encoder.dtmf(digit))
                 self._record("sent_dtmf", digit=digit)
                 # A real keypress occupies the line for a moment rather than
                 # arriving instantaneously alongside the next audio frame.
@@ -509,7 +516,7 @@ class Session:
                 await asyncio.sleep(delay)
 
             try:
-                await connection.send(_dumps(self.encoder.media(frame)))
+                await self._send(connection, self.encoder.media(frame))
             except websockets.ConnectionClosed:
                 self._hung_up = True
                 raise
@@ -587,6 +594,17 @@ class Session:
             # the two is recorded by the caller, which knows the difference.
             pass
 
+    async def _send(self, connection: Any, frame: dict[str, Any]) -> None:
+        """Serialise, trace and send one frame.
+
+        Every outbound frame goes through here so that tracing cannot miss one.
+        The trace call is a list append -- deliberately not a write -- because
+        this runs on the event loop alongside the pacer.
+        """
+        if self.config.trace is not None:
+            self.config.trace.note_out(frame, self.clock())
+        await connection.send(_dumps(frame))
+
     def _handle_message(self, message: str | bytes) -> None:
         """Parse and account for one frame from the agent."""
         # Stamp the arrival before parsing, not after. parse_outbound runs
@@ -597,6 +615,13 @@ class Session:
         # systematic bias correlated with agent behaviour, and it contradicts
         # the convention metrics.py documents: arrival, not decode completion.
         arrived_at = self.clock()
+
+        # Traced before parsing, and from the raw message, so that a frame
+        # which fails to parse still appears. A malformed frame is the single
+        # most valuable thing a trace can hold, and one that recorded only
+        # well-formed frames would omit exactly the case being reported.
+        if self.config.trace is not None:
+            self.config.trace.note_in(message, arrived_at)
 
         try:
             parsed = parse_outbound(message, expected_stream_sid=self.encoder.identity.stream_sid)
@@ -715,7 +740,7 @@ class Session:
 
             self._pending_marks.remove((due_at, name))
             try:
-                await connection.send(_dumps(self.encoder.mark(name)))
+                await self._send(connection, self.encoder.mark(name))
             except websockets.ConnectionClosed:
                 return
 
@@ -789,8 +814,8 @@ def _start_kwargs(config: SessionConfig) -> dict[str, Any]:
 def _dumps(frame: dict[str, Any]) -> str:
     """Serialise a frame for the wire.
 
-    Separate function so that every send goes through one place -- useful when
-    Phase 4 adds frame logging and network chaos.
+    Separate function so that every send goes through one place. ``Session._send``
+    is the chokepoint that uses it, and the trace hook lives there.
     """
     import json
 
