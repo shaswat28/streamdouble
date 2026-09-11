@@ -6,7 +6,8 @@
 **Status:** All six phases complete, gates 1-4 passed. Public and published on
 PyPI. Gate 5's clean-install half is done -- the package was installed from
 PyPI into an empty virtualenv and exercised; what is still owed is someone who
-is not the author reading the README cold.
+is not the author reading the README cold. Phases 7-9 are planned -- see
+the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap).
 **License:** Apache-2.0
 **Language:** Python 3.11+
 **Name:** `streamdouble` — `dialtone` was taken on PyPI. See [Progress](#progress).
@@ -392,6 +393,176 @@ That is the proof the tool has value beyond the happy path.
       fault is isolated to the tunnel rather than the agent. That is genuinely
       useful and is not what the issue asked for. The issue is also closed, so a
       comment would be a resolved thread receiving what reads as promotion.
+
+---
+
+## 3b. Phases 7-9 — the post-launch roadmap
+
+*Planned 2026-09-10, after 0.1.1. Phases 1-6 built a tool that works; these
+three address the reason someone would keep using it after the first call.*
+
+Three gaps motivate them:
+
+1. **It is a command, not a dependency.** Every CI user shells out and parses
+   JSON. Voice developers test in pytest, and streamdouble does not live there.
+2. **A latency number is a reading, not a baseline.** An absolute
+   `--max-first-audio-ms 800` gate cannot see 300 ms become 700 ms. That is the
+   regression teams actually care about and the one the tool is blind to.
+3. **It simulates half the protocol.** Only `<Connect><Stream>`. The
+   `<Start><Stream>` fork -- what transcription and compliance-recording apps
+   consume -- is unmodelled.
+
+| Phase | Thesis | Version |
+|---|---|---|
+| **7 — Become a dependency** | streamdouble stops being a command you shell out to and becomes something you `import` | 0.2.0 |
+| **8 — One call becomes a trend** | A latency number stops being a reading and becomes a baseline you can regress against | 0.3.0 |
+| **9 — The other half of the protocol** | The `<Start><Stream>` fork, and both tracks rendered into one listenable file | 0.4.0 |
+
+**Sequencing.** Phase 7 is the multiplier -- every later feature is worth more
+with users. Phase 8 is strictly downstream of it: comparing baselines means
+comparing a *structured result*, which is what Phase 7 promotes from an
+implementation detail of `cli.py` into a versioned object. Phase 9 is last
+because it is the only one with a hard external dependency -- a foreign
+`<Start><Stream>` consumer to validate against -- and because it can use Phase
+7's trace and Phase 8's repeat harness as instruments rather than growing its
+own.
+
+**The non-goals still hold.** Nothing here scores a transcript, simulates a
+turn, or draws a dashboard. One guard worth writing down: once the pytest
+plugin exists, the obvious next request is `assert_transcript_contains(...)`.
+That is LLM-as-judge with extra steps, and it is the first non-goal on the list.
+
+### Phase 7 — Become a dependency (0.2.0)
+
+- `api.py`: `CallReport`, `async call()`, `async run_scenario()`, sync wrappers
+  that refuse to run inside a live loop with a sentence naming the async form.
+- `cli.py` refactored to *call* `api` rather than duplicate it. `place_call`
+  currently interleaves running, computing, WAV writing, JSON rendering and
+  exit coding. Two code paths for "place a call" are two paths that drift --
+  which is exactly how `streamdouble scenario` shipped unreachable.
+- `pytest_plugin.py` via `[project.entry-points.pytest11]`: a `simulated_call`
+  fixture, a `streamdouble_config` fixture, and `pytest_assertrepr_compare` so
+  a failed latency assertion prints the summary block rather than `None < 800`.
+  **Not** in scope: starting the user's app. The plugin takes a URL.
+- `trace.py` and `--trace out.jsonl`: one JSON object per frame each way.
+  Closes the note in `session.py`. Payloads are opt-in (`--trace-payloads`) --
+  a 60 s call is ~30 MB of base64 nobody reads.
+- `Metrics.to_dict()` gains `schema_version`. It ships now and is consumed in
+  Phase 8; adding it *after* baselines exist is the release where you find out
+  you cannot.
+
+> ### ⛔ REVIEW GATE 6 — API extraction + observation cost
+> `/code-review high` and `/security-review`.
+> **Focused risk: the observer perturbing the observed, and the refactor
+> forking the path it was meant to unify.**
+> The trace writer is file I/O inside the receive loop -- the identical shape
+> to gate 2's quadratic `audio_received +=` finding. Assert a traced and an
+> untraced run report the same figures, extending the delay-injection harness
+> in `tests/test_measurement_validity.py`.
+> The trace is also a secret-exfiltration surface: `--param` is how agents
+> authenticate, the trace records the `start` frame, and the issue template
+> asks people to attach reproductions. Redact `customParameters` by default.
+> Plus loop reentrancy in the plugin, and `filterwarnings = ["error"]` turning
+> a plugin DeprecationWarning into a collection failure for every user.
+> Verify the refactor by mutation: break `exit_code_for` and confirm the CLI
+> test *and* the API test both go red. If only one does, the paths are still
+> separate.
+
+### Phase 8 — One call becomes a trend (0.3.0)
+
+- `-n / --repeat N`, sequential only. Concurrent calls contend for the event
+  loop and corrupt the pacing statistics that are the tool's honesty claim.
+- `aggregate.py`: per-metric `n`, `n_measured`, min, median, max, p95, stddev.
+  `metrics.percentile` and `MIN_SAMPLES_FOR_PERCENTILE` are reused verbatim,
+  not re-derived -- across-run first-audio P95 is the genuinely missing metric
+  and it is exactly the one needing 20 runs to be honest, so `-n 5` publishes a
+  median and withholds the P95, and says so.
+- `--baseline` / `--save-baseline`. Refuses to compare incomparable runs: the
+  baseline records `schema_version`, the clip's SHA-256, the chaos seed,
+  impairments and `n`, because a different clip is a different experiment
+  rather than a regression. A regression is a median exceeding the baseline by
+  more than *both* `--tolerance-pct` (25%) and `--tolerance-ms` (50 ms), so a
+  40%-worse 5 ms figure is not a build failure. A metric that was `None` in
+  either series is incomparable, never an improvement -- "None is not zero"
+  applies to deltas, and deltas are where it is easiest to get wrong.
+  Regression exits 1; no sixth exit code is invented.
+- `action.yml`, a composite GitHub Action, plus one copyable workflow.
+
+> ### ⛔ REVIEW GATE 7 — Statistics, and a YAML-to-shell seam
+> `/code-review high`, and `/security-review` for `action.yml` alone.
+> **Focused risk: aggregation is where every honesty rule this project holds
+> gets quietly violated, because averaging is so natural.** A run where the
+> agent never spoke contributes `None` -- dropping it silently reports the mean
+> of the *successful* runs as the mean of all runs, and coercing it to 0 or the
+> timeout is worse. It must read `n=20, measured=17`. Is p95 over 5 runs the
+> max wearing a statistical hat? Does a regression verdict survive being run
+> twice -- a known 300 ms delta detected, and 20 clean pairs with zero false
+> positives? And `${{ inputs.url }}` interpolated into a `run:` block is
+> command injection into every consumer's CI runner.
+
+### Phase 9 — The other half of the protocol (0.4.0)
+
+**Protocol verification, done at planning time** against
+https://www.twilio.com/docs/voice/media-streams/websocket-messages:
+
+- Confirmed, verbatim: *"Twilio sends the `mark` event only during
+  bidirectional Streams."* A fork therefore has **no mark echo and no
+  `clear`**. That is the design pivot, not a detail.
+- Confirmed: `media.track` is `"inbound"`/`"outbound"` and `start.tracks` is an
+  array of those, while the **TwiML** attribute uses `inbound_track`,
+  `outbound_track`, `both_tracks`. The same trap as `dtmf.track`, and it earns
+  a fourth citation in `protocol.py`'s docstring.
+- Confirmed: `<Connect><Stream>` is the bidirectional case, so today's
+  `["inbound"]` default is correct and stays correct.
+- **Not confirmed, and to be recorded as an inference rather than as fact:**
+  the docs state the bidirectional case affirmatively but never say that a
+  unidirectional app sending media commits a violation. Treating it as one is
+  the useful behaviour -- a simulator that accepts outbound audio on a fork
+  hides the bug it exists to find -- but it goes into `protocol.py` the way
+  `chaos.py` writes up the packet-loss model: flagged as inference, with the
+  reasoning, so whoever establishes the truth knows what to change. It is a
+  warning by default and a violation only under `--strict-fork`.
+
+- Fork mode: `--mode fork --track both|inbound|outbound`, with `--agent-audio`
+  supplying the outbound track, because in a fork Twilio sends the app the
+  audio *it* generated.
+- `--record-stereo call.wav`: caller left, agent right. The agent's channel is
+  placed at **arrival timestamps with real silence in the gaps**, never
+  concatenated -- concatenating a batching agent's frames would render a 9.5 s
+  reply delivered in 0.85 s as continuous audio, a picture of the *opposite* of
+  the barge-in bug this project is known for finding.
+- `examples/echo_agent.py` gains a fork endpoint that, in one mode, wrongly
+  tries to talk back.
+
+> ### ⛔ REVIEW GATE 8 — Fidelity, and the golden file
+> `/code-review high`. Security review not warranted: no new untrusted input,
+> no new network surface.
+> **Focused risk: this is the first phase since Phase 1 that changes bytes on
+> the wire, and the golden file is the only thing between a wrong byte and
+> three phases of downstream damage.** Does adding `track` plumbing change the
+> *default* media frame by a single byte? It must not, and a golden file that
+> needs regenerating is a finding rather than a chore. Did fork logic that
+> reads a clock or a socket land in `protocol.py`? The interleave is a
+> scheduling decision and belongs in `session.py`; the violation is a parsing
+> decision and belongs in `protocol.py`. Are the TwiML and WebSocket track
+> literals ever confused? Does the stereo writer survive a batching agent --
+> 9 s of audio sent in 0.9 s must span 9 s of file. Does fork mode hang waiting
+> for a mark echo that will never come?
+
+### Deliberately dropped, with the reasoning
+
+**`--out` path confinement.** PLAN.md previously listed it as owed. It is
+security theatre: the path is typed by the user on their own command line, in a
+process with their privileges, and someone who can write
+`--out ~/.ssh/authorized_keys` could have run `cat >` instead. Gate 4's
+confinement of scenario `say:` paths is a genuinely different case and
+`scenario.py` already states why -- **scenario files travel**, so a path inside
+one is an instruction from a stranger rather than from the user.
+
+The residual risk worth acting on is the mirror of it, and it is a schema
+constraint rather than a check: **never add an output path to the scenario YAML
+schema.** No `record:` step, no `out:` key. The day one is added, confinement
+becomes owed.
 
 ---
 
