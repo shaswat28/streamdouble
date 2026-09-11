@@ -29,6 +29,7 @@ that as a fast reply.
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -192,7 +193,22 @@ async def _run(
     The trace is flushed in a ``finally``: a call that ended badly is the one
     whose trace is worth having, and a diagnostic that only survives success is
     no diagnostic at all.
+
+    That ``finally`` must not be able to raise, and getting this wrong once is
+    how gate 6 found it. ``flush`` writes a file, so it raises for a typo in
+    the path, a read-only CI workspace or a full disk -- and from a ``finally``
+    that exception *replaces* whatever the call was actually reporting. Two
+    failures, both reproduced: a perfectly good call lost its entire report
+    because a side-file could not be written, and a call to an unreachable
+    agent reported ``PermissionError`` instead of ``ConnectionFailed``,
+    pointing the user at their filesystem while their agent was down.
+
+    This is gate 2's finding wearing different clothes -- there, a ``finally``
+    that raised discarded the ``ConnectionClosed`` that was the real problem.
+    The rule that came out of it is the rule here: cleanup does not get to
+    decide how a call ended.
     """
+    trace_failure: OSError | None = None
     try:
         try:
             result = await session.run()
@@ -200,14 +216,25 @@ async def _run(
             raise ConnectionFailed(f"could not connect to {url}: {exc}") from exc
     finally:
         if trace is not None:
-            trace.flush()
+            try:
+                trace.flush()
+            except OSError as exc:
+                trace_failure = exc
+
+    if trace_failure is not None:
+        # Reported, not raised, and not silent either. The call succeeded; the
+        # user's numbers are real and they should get them. What they must not
+        # get is a report that implies a trace exists when it does not.
+        print(f"streamdouble: could not write the trace: {trace_failure}", file=sys.stderr)
 
     metrics = compute(result)
     return CallReport(
         result=result,
         metrics=metrics,
         thresholds=evaluate_thresholds(metrics, list(thresholds or [])),
-        trace_path=trace.config.path if trace is not None else None,
+        trace_path=(
+            trace.config.path if trace is not None and trace_failure is None else None
+        ),
     )
 
 
