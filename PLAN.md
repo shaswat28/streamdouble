@@ -418,6 +418,19 @@ Three gaps motivate them:
 | **8 — One call becomes a trend** | A latency number stops being a reading and becomes a baseline you can regress against | 0.3.0 |
 | **9 — The other half of the protocol** | The `<Start><Stream>` fork, and both tracks rendered into one listenable file | 0.4.0 |
 
+> **The version column is not a release schedule.** Decided 2026-09-11:
+> **nothing is published to PyPI until Phase 9 is done.** Those numbers say
+> what each phase's code *is* -- 0.2.0 adds an API, 0.4.0 changes bytes on the
+> wire -- not that each one ships on completion. PyPI stays at 0.1.0 until the
+> roadmap is finished, and the next upload is whatever version is current then.
+> Version numbers on PyPI need not be contiguous, and a jump from 0.1.0 is
+> normal and fine.
+>
+> This is worth stating because the table by itself reads as a release
+> schedule, and a later session that bumps the version at the end of Phase 7
+> and reaches for `release.yml` would be following the plan as written. It
+> would also be irreversible: PyPI never allows a version number to be reused.
+
 **Sequencing.** Phase 7 is the multiplier -- every later feature is worth more
 with users. Phase 8 is strictly downstream of it: comparing baselines means
 comparing a *structured result*, which is what Phase 7 promotes from an
@@ -642,6 +655,7 @@ something personally useful; that is the checkpoint that sustains the rest.
 | Resampling | unspecified | **`soxr`, optional extra** | No stdlib resampler is acceptable; aliasing at 8 kHz lands in the speech band |
 | Mark echo | Phase 4 | **Phase 2** | Agents gate turn-taking on the echo; a simulator that only logs marks hangs them |
 | CI | Phase 5 | **Phase 1** | The golden-file test makes a cross-platform byte-exactness claim, so it needed proving from the start |
+| Release cadence | A release per phase | **One release, after Phase 9** | Decided 2026-09-11. 0.1.1 is merged to `main` and deliberately unpublished. Publishing is irreversible -- a PyPI version can be yanked but never replaced -- and there is no user waiting on 0.1.1, so there is nothing to buy by shipping mid-roadmap and a burnt version number to lose |
 
 ### The protocol table in §2 was wrong
 
