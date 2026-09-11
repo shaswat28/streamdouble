@@ -134,8 +134,27 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
     )
 
 
+class _Parser(argparse.ArgumentParser):
+    """An ``ArgumentParser`` that fails with this package's own usage code.
+
+    ``argparse`` exits 2 on a bad flag or an unrecognised argument, which here
+    is ``EXIT_TIMEOUT`` -- a documented, meaningful code. So a reader who typed
+    a command wrong was told their agent had failed to respond in time, and a
+    CI job gating on exit codes read a typo as a slow agent. Everything else
+    about ``argparse``'s behaviour, including exiting 0 for ``--help`` and
+    ``--version``, is left alone.
+
+    ``add_subparsers`` propagates ``parser_class``, so every subcommand
+    inherits this without being told to.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="streamdouble",
         description=(
             "Simulate a Twilio Media Stream against a voice agent's WebSocket "
