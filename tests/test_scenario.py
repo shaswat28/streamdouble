@@ -243,11 +243,42 @@ def test_invalid_yaml_is_a_scenario_error(tmp_path):
         scenario.load(path)
 
 
-def test_the_shipped_barge_in_scenario_is_valid():
-    """The example in the repository parses.
+def test_every_shipped_scenario_is_valid():
+    """The examples in the repository parse.
 
     A broken example is worse than no example: it is the first thing anyone
-    copies.
+    copies. Scenarios needing generated speech are skipped rather than failed,
+    since `fixtures/speech/` is gitignored -- it holds synthesised audio that is
+    regenerable in seconds and not ours to redistribute.
     """
-    parsed = scenario.load("scenarios/barge_in.yaml")
-    assert any(isinstance(step, Expect) and step.what == "clear" for step in parsed.steps)
+    import pathlib
+
+    shipped = sorted(pathlib.Path("scenarios").glob("*.yaml"))
+    assert shipped, "no example scenarios found"
+
+    checked = 0
+    for path in shipped:
+        try:
+            loaded = scenario.load(path)
+        except ScenarioError as exc:
+            if "speech" in str(exc) and "no such file" in str(exc):
+                # Needs `python fixtures/make_speech.py` first.
+                continue
+            raise
+        assert loaded.steps
+        checked += 1
+
+    assert checked, "every scenario was skipped; none could be validated"
+
+
+def test_the_barge_in_scenario_asserts_on_clear():
+    """The example that demonstrates barge-in actually asserts barge-in.
+
+    Checked by reading the file rather than loading it, so this holds whether or
+    not the generated speech clips are present.
+    """
+    import pathlib
+
+    text = pathlib.Path("scenarios/barge_in.yaml").read_text(encoding="utf-8")
+    assert "expect: clear" in text
+    assert "make_speech.py" in text, "it should say the clips must be generated first"

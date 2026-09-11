@@ -455,13 +455,24 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
     return await place_call(args, session, script.describe())
 
 
+#: Subcommand name to the coroutine that runs it.
+#:
+#: Module level so a test can check it against the parser's own subcommand
+#: list. `streamdouble scenario` parsed happily and then died with "unknown
+#: command" for its whole life in a public repository, because every scenario
+#: test drove the Python API instead of the CLI. A documented feature was
+#: unreachable from the command line and nothing noticed.
+RUNNERS = {"call": run_call_command, "scenario": run_scenario_command}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "call":
+    runner = RUNNERS.get(args.command)
+    if runner is not None:
         try:
-            return asyncio.run(run_call_command(args))
+            return asyncio.run(runner(args))
         except KeyboardInterrupt:
             print("\nstreamdouble: interrupted", file=sys.stderr)
             return EXIT_USAGE

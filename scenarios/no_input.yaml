@@ -1,0 +1,15 @@
+# The caller says nothing at all.
+#
+# A real call never goes silent -- Twilio streams 20ms frames continuously for
+# its whole duration, so a caller who says nothing still produces a stream of
+# near-silence. `wait` models that, rather than stopping the stream, which
+# would look to the agent like a dead line instead of a quiet caller.
+#
+# What a good agent does here is prompt, or eventually hang up. What a bad one
+# does is wait forever, which on a real call bills you for the silence.
+name: caller says nothing
+
+steps:
+  - wait_for: audio       # the agent's greeting
+  - wait: 8               # eight seconds of nothing from the caller
+  - expect: audio         # it should have said something more by now

@@ -120,8 +120,22 @@ steps:
 ```
 
 ```bash
+python fixtures/make_speech.py     # once: real speech, from your OS's own TTS
 streamdouble scenario scenarios/barge_in.yaml ws://localhost:8000/media-stream
 ```
+
+**Barge-in needs real speech, and this is the trap.** Most agents trigger
+barge-in when their transcription service produces words. The synthetic
+fixtures in this repo are speech-*like* — right for codec tests, and no STT will
+ever turn them into words. Drive a barge-in test with one and the agent never
+reacts, the test fails, and it looks like an agent bug. It is not.
+
+`fixtures/make_speech.py` generates transcribable clips using the TTS already on
+your machine — SAPI on Windows, `say` on macOS, `espeak-ng` on Linux. No
+recording, no API cost. Verified end to end: a real streaming transcription
+service returned the exact sentence, and the agent's barge-in fired on it. The
+output is gitignored, so generate your own (or drop in real recordings, which
+are better — real callers have accents and trail off mid-sentence).
 
 A failed `expect` exits 1, so a scenario is a CI check. Scenarios are validated
 before the socket opens — a typo cannot fail halfway through with your agent

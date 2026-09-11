@@ -13,3 +13,4 @@ htmlcov/
 !fixtures/*.wav
 !tests/data/*.wav
 .DS_Store
+fixtures/speech/

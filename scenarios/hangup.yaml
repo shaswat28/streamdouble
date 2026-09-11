@@ -1,0 +1,15 @@
+# The caller hangs up mid-sentence.
+#
+# Closes the socket without sending `stop`, which is what a dropped call looks
+# like from the agent's side: no clean shutdown, no warning. A different code
+# path from a polite goodbye, and the one more likely to leak a task, a socket
+# or a half-written database row.
+#
+# Nothing is asserted about the agent here. The check is that it does not crash
+# or hang -- look at its logs after, and at whether it cleaned up.
+name: caller hangs up mid-greeting
+
+steps:
+  - wait_for: audio
+  - wait: 1.0
+  - hangup

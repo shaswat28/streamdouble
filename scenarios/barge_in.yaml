@@ -1,9 +1,19 @@
 # The caller interrupts the agent mid-sentence.
 #
 # A correct agent stops talking and sends `clear` to discard the audio Twilio
-# has buffered but not yet played. An agent that does not will keep speaking
-# over the caller for however much audio is already queued -- which on a real
-# call is the difference between a conversation and being talked at.
+# has buffered but not yet played. One that does not will keep speaking over
+# the caller for however much audio is already queued -- which on a real call
+# is the difference between a conversation and being talked at.
+#
+# REQUIRES REAL SPEECH. Barge-in in most agents is triggered by the
+# transcription service producing words, and no STT will transcribe the
+# synthetic fixtures -- they are speech-like, not speech. Generate the clips
+# first:
+#
+#     python fixtures/make_speech.py
+#
+# Running this with a synthetic clip fails for a reason that has nothing to do
+# with the agent, which is a mistake worth only making once.
 name: caller interrupts the greeting
 
 steps:
@@ -13,7 +23,7 @@ steps:
   - wait: 1.5
 
   # Talk over it.
-  - say: ../fixtures/speech_8k.wav
+  - say: ../fixtures/speech/interrupt.wav
 
   # A correct agent has now asked for the buffered audio to be dropped.
   - expect: clear
