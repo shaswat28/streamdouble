@@ -522,3 +522,38 @@ def test_a_failed_expectation_exits_one(server, tmp_path):
 
     payload = json.loads(completed.stdout)
     assert payload["expectations"] == [{"what": "expect clear", "passed": False}]
+
+
+def test_argparse_failures_use_the_documented_usage_code():
+    """A bad command line exits 4, not argparse's own 2.
+
+    2 is EXIT_TIMEOUT here -- a documented code that means the agent never
+    answered. Leaving argparse on its default told anyone who mistyped a flag
+    that their agent was slow, and gave CI a typo dressed up as a test result.
+    The README has promised 4 for usage errors since the first release.
+    """
+    for argv in (
+        ["call", "ws://localhost:1", "--audio", "x.wav", "stray-argument"],
+        ["call", "ws://localhost:1", "--no-such-flag"],
+        ["call", "ws://localhost:1"],  # --audio is required
+        ["no-such-subcommand"],
+        [],  # a subcommand is required
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            cli.main(argv)
+        assert exit_info.value.code == cli.EXIT_USAGE, (
+            f"{argv} exited {exit_info.value.code}, expected EXIT_USAGE"
+        )
+
+
+def test_help_and_version_still_exit_zero():
+    """The usage-code override must not swallow the successful exits.
+
+    `--help` and `--version` go through the same `parser.exit`, and a parser
+    that returned 4 for them would break every `command --version` check in a
+    packaging script.
+    """
+    for argv in (["--help"], ["--version"], ["call", "--help"], ["scenario", "--help"]):
+        with pytest.raises(SystemExit) as exit_info:
+            cli.main(argv)
+        assert exit_info.value.code == 0, f"{argv} exited {exit_info.value.code}, expected 0"

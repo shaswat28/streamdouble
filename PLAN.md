@@ -357,7 +357,9 @@ That is the proof the tool has value beyond the happy path.
 >
 > **Still owed:** installing *from PyPI* and following the README literally,
 > which cannot happen until there is something on PyPI. And a human who is
-> not the author reading it cold.
+> not the author reading it cold. A close read of the README has since found
+> one shipped copy-paste failure and a test that could not see it -- see
+> [Gate 5's first finding](#gate-5s-first-finding-from-reading-rather-than-fresh-eyes).
 >
 > <details><summary>Original gate text</summary>
 >
@@ -759,3 +761,48 @@ because it would be undetectable, and a test tool should present the harder case
 
 **Not a finding, having been checked:** `wss://` verifies certificates, because
 `websockets` uses `ssl.create_default_context` and nothing here overrides it.
+
+## Gate 5's first finding, from reading rather than fresh eyes
+
+*2026-09-10.*
+
+The README's CI-gate example wrote its line continuation as the two characters
+`\` and `n`. It reads as a wrapped command and copy-pastes as a broken one --
+the shell drops the backslash and hands `streamdouble` a stray argument `n`.
+It shipped that way in 0.1.0 and 0.1.1.
+
+**The typo is not the finding.** `tests/test_documented_commands.py` extracted
+that command and ran it, exactly as designed, and it passed. Its only assertion
+was `returncode != EXIT_USAGE`, and `argparse` never returns `EXIT_USAGE` --
+`parser.error` exits **2**, which in this package is `EXIT_TIMEOUT`. So the
+entire class of failure the test exists to catch (bad flag, unknown subcommand,
+stray argument) was invisible to it, and a reader who mistyped a flag was told
+their agent had failed to respond in time. A CI job gating on exit codes read a
+typo as a slow agent. The README has promised `4` for usage errors since the
+first release.
+
+This is the same shape as the `scenario` subcommand bug that caused that test
+file to exist: a check that looks like it covers the command line, keyed to a
+value the command line never produces. Writing the test was not enough; the
+test needed a failing case to be verified against, and it never had one.
+
+Fixed by `_Parser`, which overrides `error()` to exit `EXIT_USAGE`.
+`add_subparsers` propagates `parser_class`, so both subcommands inherit it, and
+`--help` / `--version` still exit 0 -- asserted, because a parser that returned
+4 for `--version` would break every packaging script that checks it.
+
+Three regression tests, each verified failing against the old behaviour:
+
+- no bash block in the docs may contain a literal `\n`, checked in the document
+  before anything is run;
+- the runner test also asserts on stderr for `unrecognized arguments`, so it
+  holds independently of whatever the exit code happens to be;
+- the exit code itself, across five malformed command lines and four
+  well-formed ones.
+
+**What this says about gate 5.** It was found by reading the README closely,
+which is the cheap half of the fresh-eyes pass and evidently still productive.
+It is not a substitute for the half that is still owed: a person who did not
+write this following the quickstart literally would have hit the broken
+copy-paste in their first two minutes, and would not have needed to reason
+about exit codes to notice.

@@ -53,6 +53,30 @@ def documented_commands() -> list[tuple[str, str]]:
     return found
 
 
+def test_no_bash_block_contains_a_literal_backslash_n():
+    """A line continuation written as the two characters `\\` and `n`.
+
+    The README's CI-gate example carried one for an entire published release.
+    It reads as a wrapped command and copy-pastes as a broken one: the shell
+    hands the program a stray argument `n`, and `shlex` does the same here --
+    so that command *was* extracted and *was* run, and still did not fail,
+    because `argparse` exited 2 and the only assertion checked for 4.
+
+    Both halves are fixed. This is the half that catches it in the document,
+    before anything has to run.
+    """
+    offenders = []
+    for name in DOCUMENTS:
+        text = (ROOT / name).read_text(encoding="utf-8")
+        for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+            for number, line in enumerate(block.splitlines(), 1):
+                if "\\n" in line:
+                    offenders.append(f"{name} bash block line {number}: {line.strip()}")
+    assert not offenders, "literal backslash-n where a line continuation belongs:\n" + "\n".join(
+        offenders
+    )
+
+
 def test_the_docs_contain_commands_to_check():
     """Guards the extractor itself.
 
@@ -128,4 +152,15 @@ def test_a_documented_command_runs(document, command, server, tmp_path):
         f"{document} documents a command that does not run:\n"
         f"  {command}\n"
         f"  exit {completed.returncode}: {completed.stderr.strip()[:300]}"
+    )
+
+    # `argparse` used to exit 2 here rather than EXIT_USAGE, so the assertion
+    # above could not see a bad flag or a stray argument at all -- it read them
+    # as EXIT_TIMEOUT, which is to say as a slow agent. `_Parser` now raises
+    # usage failures as EXIT_USAGE; this checks the stderr that goes with them,
+    # so the two cannot drift apart again without a test noticing.
+    assert "error: unrecognized arguments" not in completed.stderr, (
+        f"{document} documents a command with a stray argument:\n"
+        f"  {command}\n"
+        f"  {completed.stderr.strip()[:300]}"
     )
