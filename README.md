@@ -102,7 +102,8 @@ looks like. Add `?mode=silent` to the URL for an agent that never answers, or
 ## Use it as a CI gate
 
 ```bash
-streamdouble call ws://localhost:8000/media-stream --audio hello.wav \n  --max-first-audio-ms 800 --json
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --max-first-audio-ms 800 --json
 ```
 
 ```json
