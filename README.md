@@ -5,9 +5,10 @@ WebSocket endpoint locally, at full protocol fidelity, without placing a real ca
 
 ![streamdouble placing a simulated Twilio call](docs/demo.svg)
 
-> **Status: pre-alpha, under active construction.** Phases 1–5 of 6 complete.
-> Places real calls, records the reply, simulates bad networks, runs scripted
-> scenarios, and gates on latency in CI. Not yet published to PyPI.
+> **Status: early, but it works.** Places real calls, records the reply,
+> simulates bad networks, runs scripted scenarios, and gates on latency in CI.
+> Validated against a production voice agent, where it found a real bug.
+> Expect the API to move before 1.0.
 
 ---
 
@@ -29,12 +30,27 @@ enough that your agent cannot tell it isn't Twilio.
 Two terminals. No Twilio account, no tunnel, no phone.
 
 ```bash
-pip install -e ".[dev]"
-python examples/echo_agent.py --port 8000
+pip install streamdouble
+```
+
+Point it at your agent, with any WAV as the caller's voice:
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav --out reply.wav
+```
+
+`reply.wav` is what your agent said back.
+
+**No voice agent yet?** Clone this repository — it ships one to talk to, plus
+the audio fixtures:
+
+```bash
+git clone https://github.com/shaswat28/streamdouble && cd streamdouble
+python examples/echo_agent.py --port 8000          # terminal one
 ```
 
 ```bash
-streamdouble call ws://localhost:8000/media-stream --audio fixtures/speech_8k.wav --out reply.wav
+streamdouble call ws://localhost:8000/media-stream   --audio fixtures/speech_8k.wav --out reply.wav   # terminal two
 ```
 
 ```
@@ -114,7 +130,7 @@ name: caller interrupts the greeting
 steps:
   - wait_for: audio        # let the agent get going
   - wait: 1.5              # streaming silence, not stopping
-  - say: ../fixtures/speech_8k.wav
+  - say: ../fixtures/speech/interrupt.wav
   - expect: clear          # a correct agent stops talking
   - wait: 1.0
 ```

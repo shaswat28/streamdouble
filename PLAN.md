@@ -3,9 +3,10 @@
 > A framework-agnostic Twilio Media Streams simulator. Test your voice agent's
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-**Status:** Phases 1-5 complete, gates 1-4 passed, Phase 6 under way. Public,
-not yet on PyPI. Gate 5 (fresh-eyes / clean-machine) is partly done and partly
-owed.
+**Status:** All six phases complete, gates 1-4 passed. Public and published on
+PyPI. Gate 5's clean-install half is done -- the package was installed from
+PyPI into an empty virtualenv and exercised; what is still owed is someone who
+is not the author reading the README cold.
 **License:** Apache-2.0
 **Language:** Python 3.11+
 **Name:** `streamdouble` — `dialtone` was taken on PyPI. See [Progress](#progress).
@@ -341,9 +342,9 @@ That is the proof the tool has value beyond the happy path.
 - [x] CONTRIBUTING.md and issue templates. The protocol-difference template
       leads with "tell us where the simulation is wrong", because that is the
       most valuable report this project can receive.
-- [ ] **PyPI publish — not yet done.** `.github/workflows/release.yml` is
-      manual-dispatch only, with `publish: false` by default, so the ordinary
-      run builds and verifies without uploading anything.
+- [x] **PyPI publish — done.** `.github/workflows/release.yml` stays
+      manual-dispatch with `publish: false` by default, so no release happens
+      by accident. 0.1.0.dev0 went out first; 0.1.0 is the real one.
 
 > ### 🟡 REVIEW GATE 5 — Fresh-eyes pass — PARTLY DONE
 >
@@ -369,7 +370,7 @@ That is the proof the tool has value beyond the happy path.
 
 ---
 
-### Phase 6 — Distribution 🔨 IN PROGRESS
+### Phase 6 — Distribution ✅ DONE
 
 - [x] **Claude Code skill wrapper** — `skill/SKILL.md`. Carries the judgement
       as well as the commands: disable what the agent touches on hangup before
@@ -432,7 +433,7 @@ something personally useful; that is the checkpoint that sustains the rest.
 - [ ] A stranger installs it and gets a result in under five minutes
 - [ ] Reproduces at least one real bug that a phone call would have been needed to find
 - [ ] README has a demo GIF and an honest comparison table
-- [ ] Published to PyPI under AGPL-3.0
+- [x] Published to PyPI under Apache-2.0
 
 ---
 

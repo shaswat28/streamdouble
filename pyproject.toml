@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "streamdouble"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "A framework-agnostic Twilio Media Streams simulator. Test your voice agent's WebSocket endpoint locally, at full protocol fidelity, without placing a real call."
 readme = "README.md"
 requires-python = ">=3.11"
