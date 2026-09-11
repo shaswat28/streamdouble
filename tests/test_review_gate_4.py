@@ -207,15 +207,32 @@ def test_a_clip_beside_the_scenario_is_fine(tmp_path):
     assert isinstance(scenario.load(path).steps[0], Say)
 
 
-def test_a_clip_elsewhere_in_the_project_is_fine():
-    """The shipped scenario refers to ../fixtures, which is an ordinary layout.
+def test_a_clip_elsewhere_in_the_project_is_fine(tmp_path, monkeypatch):
+    """A scenario in one directory may use a clip from a sibling directory.
 
-    Confining strictly to the scenario's own directory rejected this, which is
-    why the boundary is the scenario directory *or* the working directory --
-    the containment has to permit normal project structure or it will simply be
-    turned off.
+    `scenarios/x.yaml` referring to `../fixtures/clip.wav` is ordinary project
+    layout, not an attack. Confining strictly to the scenario's own directory
+    rejected exactly that and immediately broke this repository's own example --
+    containment that forbids normal structure gets switched off, so the boundary
+    is the scenario directory *or* the working directory.
+
+    Builds its own layout rather than loading the shipped scenario. That one now
+    needs generated speech, which is gitignored, so depending on it made this
+    test pass locally and fail on a clean checkout -- which is precisely the
+    failure mode it is here to rule out.
     """
-    loaded = scenario.load("scenarios/barge_in.yaml")
+    import shutil
+
+    project = tmp_path / "project"
+    (project / "scenarios").mkdir(parents=True)
+    (project / "clips").mkdir()
+    shutil.copy("fixtures/speech_8k.wav", project / "clips" / "hello.wav")
+
+    path = project / "scenarios" / "s.yaml"
+    path.write_text("steps:\n  - say: ../clips/hello.wav\n")
+
+    monkeypatch.chdir(project)
+    loaded = scenario.load(path)
     assert any(isinstance(step, Say) for step in loaded.steps)
 
 
