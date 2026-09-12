@@ -708,17 +708,32 @@ Verified against the live Twilio docs. Three corrections, each now cited in
 
 ```
 src/streamdouble/
-  g711.py       G.711 μ-law codec, from the ITU-T spec. No audioop.
-  audio.py      WAV I/O, downmix, resample, 20 ms framing.
-  protocol.py   Frame builders + parser. Pure. Enforces frame ordering.
-  pacer.py      Absolute-deadline scheduling with drift correction.
-  session.py    WebSocket lifecycle: send + receive + mark echo under a TaskGroup.
-  cli.py        `streamdouble call ...`
-  metrics.py    Latency and conformance metrics, derived from the event log.
+  g711.py           G.711 μ-law codec, from the ITU-T spec. No audioop.
+  audio.py          WAV I/O, downmix, resample, 20 ms framing, stereo writer.
+  protocol.py       Frame builders + parser. Pure. Enforces frame ordering.
+  pacer.py          Absolute-deadline scheduling with drift correction.
+  chaos.py          Seeded packet loss, jitter and latency.
+  scenario.py       YAML call scripts, validated before the socket opens.
+  session.py        WebSocket lifecycle: send + receive + mark echo under a
+                    TaskGroup. Fork mode and the two-track interleave.
+  metrics.py        Latency and conformance metrics, derived from the event log.
+  aggregate.py      Statistics across several calls. Withholds what it cannot
+                    honestly report.
+  baseline.py       Save a run; compare a later one; refuse when they are not
+                    comparable.
+  trace.py          Frame-by-frame JSON Lines. Capped, redacted, flushed after
+                    the socket closes.
+  api.py            The public surface. The CLI is a renderer over it.
+  pytest_plugin.py  `simulated_call` and `streamdouble_config`, via pytest11.
+  cli.py            `streamdouble call ...` and `streamdouble scenario ...`
 examples/
-  echo_agent.py FastAPI agent. Modes: echo, silent, hangup, garbage, clear.
-fixtures/       12 generated WAVs + the deterministic generator.
-tests/          277 passing, on Linux + Windows × Python 3.11/3.12/3.13.
+  echo_agent.py     FastAPI agent, two endpoints. Bidirectional modes: echo,
+                    silent, hangup, garbage, clear, delay. Fork modes:
+                    talk_back, mark_back.
+action.yml          Composite GitHub Action.
+fixtures/           12 generated WAVs + the deterministic generator, plus
+                    `make_speech.py` for real TTS speech (gitignored output).
+tests/              512 passing, on Linux + Windows × Python 3.11/3.12/3.13.
 ```
 
 ### Review gate findings
@@ -834,15 +849,33 @@ tests/          277 passing, on Linux + Windows × Python 3.11/3.12/3.13.
 
 ### Next session should
 
-1. **Phase 6, distribution** — the Claude Code skill wrapper, and the launch
-   posts. All of it presupposes a public repo, so it waits on that decision.
-2. **Real recorded speech fixtures.** The synthetic ones are right for codec
-   tests and insufficient for agent tests: a real STT service will not transcribe
-   speech-*like* audio, so the first barge-in run failed for want of real words
-   rather than for want of a working agent. A human voice saying a few
-   sentences would unlock scenario testing against any STT-backed agent.
-3. **Finish gate 5** once there is something to install from PyPI, and get
-   someone who is not the author to read the README cold.
+*Updated 2026-09-12, after phases 7-9 and gates 6-8. The roadmap is finished;
+everything below needs either a decision or a person, which is why none of it
+got done by carrying on coding.*
+
+1. **Decide about a release.** The cadence decision was "nothing publishes
+   until phase 9", and phase 9 is done -- so this is now a decision rather than
+   a blocker. PyPI is at 0.1.0; `main` is a long way past it. Whatever ships
+   should probably be 0.2.0 or later rather than the 0.1.1 that was merged and
+   never published, since the API surface is substantially bigger than that
+   number suggests.
+2. **Real recorded speech fixtures.** Unchanged, and still the thing that
+   unlocks most: the synthetic fixtures are right for codec tests and useless
+   for agent tests, because no STT will transcribe speech-*like* audio. The
+   generated TTS in `make_speech.py` closed enough of the gap to run barge-in
+   scenarios, but a human voice with an accent that trails off mid-sentence is
+   what a real caller sounds like.
+3. **Gate 5's fresh-eyes half.** Still owed, still needs a person who is not
+   the author reading the README cold. A close read by the author has now found
+   two shipped defects (a broken copy-paste, and the usage exit code behind
+   it), which is evidence the reading is worth doing and not evidence it has
+   been done.
+4. **Validate fork mode against a foreign implementation.** Phase 9 was
+   validated against `examples/echo_agent.py`, which is *our* code written from
+   *our* reading of the docs -- exactly the shared-misreading risk that made
+   Phase 2's real-agent validation worth doing. A real `<Start><Stream>`
+   consumer, usually a transcription or compliance-recording app, is what would
+   settle the two inferences recorded in `protocol.py`.
 
 ---
 
