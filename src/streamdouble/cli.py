@@ -58,6 +58,15 @@ from .trace import TraceConfig
 #: re-export rather than dead code and removes them. That is not hypothetical:
 #: it happened during the refactor that introduced this module, and every
 #: exit-code test went red at once.
+#: Fewest runs before a baseline comparison is allowed.
+#:
+#: Not a style preference. PLAN.md records the reasoning as a phase-8
+#: precondition: a baseline comparison must not ship without repeat runs,
+#: because comparing two single calls compares two samples of a noisy process
+#: and produces false regressions. Three is the floor at which a median means
+#: anything at all; 20 is where the percentile does, which the summary says.
+MIN_RUNS_FOR_COMPARISON = 3
+
 __all__ = [
     "EXIT_ASSERTION_FAILED",
     "EXIT_CONNECTION_FAILED",
@@ -195,9 +204,29 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
         "--tolerance-ms", type=float, default=baseline_module.DEFAULT_TOLERANCE_MS,
         metavar="MS",
         help=(
-            "how much worse, absolutely, counts as a regression. A change must "
-            "exceed this AND --tolerance-pct, so a 40%% worse 5ms figure is not "
-            "a build failure (default: %(default)s)"
+            "how much worse, absolutely, counts as a regression for metrics "
+            "measured in milliseconds. A change must exceed this AND "
+            "--tolerance-pct, so a 40%% worse 5ms figure is not a build "
+            "failure (default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--tolerance-ratio", type=float, default=baseline_module.DEFAULT_TOLERANCE_RATIO,
+        metavar="N",
+        help=(
+            "the same absolute bar for metrics that are ratios rather than "
+            "durations, currently just delivery ratio. Separate because 50 "
+            "means something entirely different for a duration in "
+            "milliseconds than for a ratio that runs from about 1 to 12 "
+            "(default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--allow-unmeasured-baseline", action="store_true",
+        help=(
+            "save a baseline even when the run measured nothing. Off by "
+            "default: such a baseline makes every later comparison "
+            "incomparable, which silently disables the regression check"
         ),
     )
 
@@ -470,7 +499,7 @@ def report(
 def report_series(series: RunSeries, write=print) -> None:
     """Print a summary of several runs."""
     write()
-    write(f"  {series.n} runs, {series.failures} failed")
+    write(f"  {series.n} run{'' if series.n == 1 else 's'}, {series.failures} failed")
     write()
     write(f"  {'':<16}{'median':>10}{'min':>10}{'max':>10}{'p95':>10}{'stddev':>9}  n")
     for metric in series.metrics:
@@ -597,6 +626,24 @@ async def run_call_command(args: argparse.Namespace) -> int:
         print("streamdouble: --repeat must be at least 1", file=sys.stderr)
         return EXIT_USAGE
 
+    if args.baseline and args.repeat < MIN_RUNS_FOR_COMPARISON:
+        # Comparing single calls compares two samples of a noisy process.
+        # Two calls over a real socket differ by tens of milliseconds for
+        # reasons that have nothing to do with the agent -- this project's own
+        # trace parity test passed alone and failed in sequence until it was
+        # changed to medians. A regression check that fires on that noise gets
+        # `continue-on-error` added to it, after which it never fires again,
+        # and a gate nobody trusts is worse than no gate.
+        print(
+            f"streamdouble: --baseline needs at least --repeat "
+            f"{MIN_RUNS_FOR_COMPARISON}; comparing {args.repeat} call(s) against "
+            "a baseline compares samples of a noisy process and will report "
+            "regressions that are not real. 20 runs is where the percentile "
+            "becomes meaningful too.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     if not args.quiet and not args.json:
         suffix = f" x{args.repeat}" if args.repeat > 1 else ""
         print(
@@ -680,9 +727,28 @@ async def run_series(args: argparse.Namespace, frames: list[bytes], config) -> i
             series,
             tolerance_pct=args.tolerance_pct,
             tolerance_ms=args.tolerance_ms,
+            tolerance_ratio=args.tolerance_ratio,
         )
 
     if args.save_baseline:
+        unmeasured = [m for m in series.metrics if m.median is None]
+        if unmeasured and not args.allow_unmeasured_baseline:
+            # A baseline in which nothing was measured is worse than no
+            # baseline. Every later comparison against it reads "not
+            # comparable" and never regresses, so the gate silently stops
+            # checking -- and it looks healthy, because "not comparable" is the
+            # correct response to missing data. The realistic path is a
+            # scheduled baseline refresh running on a day the agent is down.
+            print(
+                f"streamdouble: not writing {args.save_baseline}: this run "
+                f"measured nothing for {len(unmeasured)} of "
+                f"{len(series.metrics)} metrics, and a baseline like that makes "
+                "every later comparison incomparable -- which disables the "
+                "regression check without failing. Fix the run first, or pass "
+                "--allow-unmeasured-baseline if you meant it.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
         baseline_module.save(args.save_baseline, series, payloads)
 
     if args.json:

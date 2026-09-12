@@ -108,6 +108,7 @@ streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
 
 ```json
 {
+  "schema_version": 1,
   "time_to_first_audio_ms": 440.7,
   "mean_inbound_gap_ms": 15.6,
   "p95_inbound_gap_ms": 31.7,

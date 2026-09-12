@@ -512,6 +512,14 @@ That is LLM-as-judge with extra steps, and it is the first non-goal on the list.
   Regression exits 1; no sixth exit code is invented.
 - `action.yml`, a composite GitHub Action, plus one copyable workflow.
 
+> ### ✅ REVIEW GATE 7 — Statistics, and a YAML-to-shell seam — PASSED
+>
+> Ran. 4 findings, all fixed and mutation-verified in
+> `tests/test_review_gate_7.py`. Three of the four were the same failure:
+> a regression gate that silently stops checking. See [Gate 7](#phase-8-and-gate-7).
+>
+> <details><summary>Original gate text</summary>
+>
 > ### ⛔ REVIEW GATE 7 — Statistics, and a YAML-to-shell seam
 > `/code-review high`, and `/security-review` for `action.yml` alone.
 > **Focused risk: aggregation is where every honesty rule this project holds
@@ -523,6 +531,8 @@ That is LLM-as-judge with extra steps, and it is the first non-goal on the list.
 > twice -- a known 300 ms delta detected, and 20 clean pairs with zero false
 > positives? And `${{ inputs.url }}` interpolated into a `run:` block is
 > command injection into every consumer's CI runner.
+>
+> </details>
 
 ### Phase 9 — The other half of the protocol (0.4.0)
 
@@ -996,6 +1006,79 @@ no background noise and no trailing off mid-sentence. Real recorded human speech
 remains worth having, and remains listed above as an open item -- not because
 this check was weak, but because it is the *input* that is synthetic, not the
 measurement.
+
+## Phase 8 and gate 7
+
+*2026-09-11.*
+
+### What Phase 8 built
+
+`-n/--repeat` places several calls in sequence -- never parallel, because
+concurrent calls delay each other's frames and would corrupt the very
+statistics being gathered, worse the more runs were asked for. `aggregate.py`
+summarises them; `baseline.py` saves a series and compares a later one against
+it; `action.yml` is a composite GitHub Action.
+
+There is no `--retries` and there will not be. Repeating a call to measure its
+spread is useful; repeating it until it passes hides a flaky agent, and a tool
+offering the second cannot be trusted about the first.
+
+**Two bugs were found by running it rather than by testing it**, which is worth
+recording because both tests passed at the time:
+
+- **`delivery_ratio` could never be flagged as a regression.** A 50
+  *millisecond* absolute floor was applied to a dimensionless ratio ranging
+  from about 1 to 12, so no movement could ever clear it. That metric is what
+  the barge-in blind spot is made of, making it the worst possible one to
+  exempt silently. Metrics now carry a unit and get the floor for it.
+- **The baseline check ran after the whole series.** It placed every call and
+  *then* refused as incomparable, when the clip hash, seed and impairments were
+  all known beforehand. It now refuses before the first call -- the principle
+  the scenario loader already follows.
+
+The two-bar tolerance rule earned its keep immediately: a max-gap change of
++29% correctly did not fail the build, being only +13.6 ms.
+
+### Gate 7 findings
+
+**4 findings** (`tests/test_review_gate_7.py`, all mutation-verified). Three
+are the same failure wearing different clothes, and naming it is the point:
+**a regression gate that silently stops checking.** It does not crash and it
+does not print a wrong number -- it keeps producing a clean summary while
+nothing is verified, which is indistinguishable from working until a real
+regression ships.
+
+- **`--save-baseline` wrote a baseline from a run that measured nothing.**
+  Reproduced: against a silent agent it exits 2 and still writes a file whose
+  every median is `null`. Every later comparison then reads "not comparable"
+  and passes -- and looks healthy, because "not comparable" *is* the correct
+  response to missing data. The realistic path is a scheduled baseline refresh
+  running on a day the agent is down. Now refused, with
+  `--allow-unmeasured-baseline` as the deliberate escape hatch.
+- **`-n 1 --baseline` was permitted**, comparing single samples -- the exact
+  case this plan recorded as a precondition ("a baseline comparison must not
+  ship without `-n`") and which shipped anyway. A minimum of 3 runs is now
+  enforced when `--baseline` is given.
+- **`--tolerance-ms` silently did not apply to `delivery_ratio`**, and nothing
+  else did: `compare()` accepted a `tolerance_ratio` the CLI never passed and
+  no flag exposed. Someone loosening tolerances for a noisy environment would
+  reasonably believe it covered every metric. `--tolerance-ratio` added and
+  threaded through.
+- **A baseline value of `0` made a metric permanently uncatchable.** `not 0.0`
+  is true in Python, so `delta_pct` returned `None` and `regressed`
+  short-circuited on it. A gap recorded as 0.0 against a fast local stub could
+  climb to half a second against a real agent and never register. The
+  percentage really is undefined at zero, which is the argument for falling
+  back to the absolute bar rather than declining to judge.
+
+**One test initially failed to detect its own bug**, and mutation testing is
+the only reason that was noticed. The `--tolerance-ratio` test asserted that a
+loose tolerance exits 0 -- which the clean case does anyway, so it could not
+tell a working flag from one that parses and is then dropped. Removing
+`tolerance_ratio=args.tolerance_ratio` left all fourteen tests green. Rewritten
+to drive a run whose delivery ratio genuinely regresses and check the flag can
+call it off. A test that cannot fail is not a weaker test, it is a false
+statement about coverage.
 
 ## Phase 7 and gate 6
 
