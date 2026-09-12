@@ -44,10 +44,33 @@ jobs:
           /tmp/clean/bin/python -m pip install dist/*.whl
           /tmp/clean/bin/streamdouble --version
           /tmp/clean/bin/python -c "
-          from streamdouble import audio, chaos, metrics, protocol, scenario
-          print('imports ok')
+          import importlib, streamdouble
+          # Every shipped module except pytest_plugin, which imports pytest and
+          # is only ever loaded through the pytest11 entry point. Listing them
+          # explicitly rather than naming a handful: this check previously
+          # imported five modules and the package has fifteen, so four of the
+          # newest could have been broken and released regardless.
+          for name in [
+              'aggregate', 'api', 'audio', 'baseline', 'chaos', 'cli', 'g711',
+              'metrics', 'pacer', 'protocol', 'scenario', 'session', 'trace',
+          ]:
+              importlib.import_module('streamdouble.' + name)
+          print('all modules import:', streamdouble.__version__)
+          from streamdouble import audio
           print(len(audio.wav_to_ulaw_frames('fixtures/speech_8k.wav')), 'frames')
           "
+
+      - name: The version being published is the one in the source
+        # A wheel whose filename and __version__ disagree is confusing in
+        # exactly the situation where someone is working out what they have.
+        run: |
+          SOURCE=$(/tmp/clean/bin/python -c "import streamdouble; print(streamdouble.__version__)")
+          test -f "dist/streamdouble-$SOURCE.tar.gz" || {
+            echo "no sdist for version $SOURCE; dist/ holds:" >&2
+            ls dist/ >&2
+            exit 1
+          }
+          echo "publishing $SOURCE"
 
       - uses: actions/upload-artifact@v7
         with:

@@ -3,7 +3,7 @@
 **A framework-agnostic Twilio Media Streams simulator.** Test your voice agent's
 WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-![streamdouble placing a simulated Twilio call](docs/demo.svg)
+![streamdouble placing a simulated Twilio call](https://raw.githubusercontent.com/shaswat28/streamdouble/main/docs/demo.svg)
 
 > **Status: early, but it works.** Places real calls, records the reply,
 > simulates bad networks, runs scripted scenarios, and gates on latency in CI.
@@ -170,7 +170,7 @@ what you assert on here and what `--json` prints cannot disagree.
 An agent that never spoke has `time_to_first_audio_ms` of `None`, and the
 plugin explains that failure rather than leaving you with a bare `TypeError`.
 Full reference, including per-suite configuration and the pytest-asyncio
-setting you need: **[docs/python-api.md](docs/python-api.md)**.
+setting you need: **[docs/python-api.md](https://github.com/shaswat28/streamdouble/blob/main/docs/python-api.md)**.
 
 ## Catch a regression an absolute threshold cannot see
 
@@ -490,10 +490,14 @@ reason.
 
 ## Notes
 
-[Six ways to get Twilio Media Streams audio wrong](docs/mulaw-gotchas.md) —
+[Six ways to get Twilio Media Streams audio wrong](https://github.com/shaswat28/streamdouble/blob/main/docs/mulaw-gotchas.md) —
 what building this turned up, including why μ-law silence is `0xFF`, why one
 code exists that no encoder emits, and why "finished sending" is not "finished
 speaking".
+
+## Changelog
+
+[What changed in each release](https://github.com/shaswat28/streamdouble/blob/main/CHANGELOG.md).
 
 ## Not affiliated with Twilio
 
@@ -503,4 +507,4 @@ purposes. "Twilio" is a trademark of Twilio Inc.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](https://github.com/shaswat28/streamdouble/blob/main/LICENSE).
