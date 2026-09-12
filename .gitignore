@@ -22,3 +22,7 @@ demo-out/
 # every command in the README from the repository root, so the --trace example
 # lands one here on every test run.
 *.jsonl
+
+# Same reason as *.jsonl: the README documents --save-baseline, and
+# test_documented_commands runs every documented command from the repo root.
+/baseline.json
