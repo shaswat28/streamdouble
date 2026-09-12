@@ -171,6 +171,76 @@ plugin explains that failure rather than leaving you with a bare `TypeError`.
 Full reference, including per-suite configuration and the pytest-asyncio
 setting you need: **[docs/python-api.md](docs/python-api.md)**.
 
+## Catch a regression an absolute threshold cannot see
+
+An agent that answered in 300 ms and now answers in 700 ms has got more than
+twice as slow — and still passes `--max-first-audio-ms 800`. That is the
+regression teams actually care about, and it needs a *baseline* rather than a
+limit.
+
+```bash
+# once, on a known-good build
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  -n 20 --save-baseline baseline.json
+
+# in CI, from then on
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  -n 20 --baseline baseline.json
+```
+
+```
+  20 runs, 0 failed
+
+                      median       min       max       p95   stddev  n
+  first audio          181.7     166.4     194.1     193.2      9.2  20/20
+  mean gap              18.2      18.1      18.3      18.3      0.1  20/20
+  delivery ratio         1.1       1.1       1.2       1.2      0.0  20/20
+
+  against the baseline:
+    first audio      181.7 -> 585.8 (+404.1, +222%)  REGRESSION
+```
+
+A regression exits 1, same as a failed threshold — it is the same kind of fact.
+
+**`-n` is a distribution, not a retry.** There is no `--retries` and there will
+not be: repeating a call to measure its spread is useful, repeating it until it
+passes hides a flaky agent, and a tool that offers the second cannot be trusted
+about the first. Runs are sequential, never parallel — concurrent calls delay
+each other's frames and would corrupt the statistics being gathered.
+
+Three things the check refuses to do:
+
+- **Compare incomparable runs.** The baseline records a hash of the clip's
+  *contents*, the chaos seed and the impairments. Swap your test audio and it
+  says so and exits 4, rather than reporting a "regression" that is really two
+  different experiments being subtracted. It refuses before placing a single
+  call, since everything it needs to know is known beforehand.
+- **Fire on noise.** A change must exceed *both* a percentage and an absolute
+  floor. 5 ms becoming 8 ms is 60% worse and inaudible; 2000 ms becoming
+  2040 ms is 40 ms and nobody notices. Neither fails your build.
+- **Treat a missing measurement as an improvement.** An agent that has stopped
+  speaking has `null` where it had 400 ms. Subtracting those would report a
+  cheerful "−400 ms"; instead it reads `was 181.7, now never measured` and
+  counts as the most serious regression there is.
+
+Below 20 runs the P95 is withheld and the output says why, because a P95 over
+five samples is the maximum wearing a statistical hat.
+
+### In GitHub Actions
+
+```yaml
+- uses: shaswat28/streamdouble@main
+  with:
+    url: ws://localhost:8000/media-stream
+    audio: fixtures/hello.wav
+    repeat: "20"
+    baseline: baseline.json
+    max-first-audio-ms: "800"
+```
+
+The JSON results and the frame trace are uploaded as an artifact on every run,
+including failures — a failing run is the one whose trace you want.
+
 ## Script a whole call
 
 A single clip is one test. The bugs live in the timing *between* things — the

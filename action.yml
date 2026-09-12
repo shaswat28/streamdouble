@@ -1,0 +1,118 @@
+name: streamdouble
+description: >-
+  Place a simulated Twilio Media Streams call against a voice agent's WebSocket
+  endpoint and gate the build on what comes back. No phone, no tunnel, no
+  Twilio account.
+author: Shaswat Sharma
+
+branding:
+  icon: phone-call
+  color: purple
+
+inputs:
+  url:
+    description: WebSocket URL of the agent, e.g. ws://localhost:8000/media-stream
+    required: true
+  audio:
+    description: WAV file to stream as the caller's voice.
+    required: true
+  max-first-audio-ms:
+    description: >-
+      Fail if the agent's first audio takes longer than this. 800 is the usual
+      conversational-flow target. Leave empty for no absolute threshold.
+    required: false
+    default: ""
+  repeat:
+    description: >-
+      How many calls to place. One call is a sample, not a measurement; a
+      baseline comparison is only trustworthy on top of several.
+    required: false
+    default: "1"
+  baseline:
+    description: >-
+      Path to a saved baseline to compare against. Catches an agent going from
+      300ms to 700ms, which no absolute threshold can see.
+    required: false
+    default: ""
+  save-baseline:
+    description: Path to write this run's summary to.
+    required: false
+    default: ""
+  version:
+    description: Version of streamdouble to install. Defaults to the latest.
+    required: false
+    default: ""
+  artifact-name:
+    description: Name for the uploaded JSON and trace artifact.
+    required: false
+    default: streamdouble-results
+
+outputs:
+  json:
+    description: Path to the JSON results file.
+    value: ${{ steps.call.outputs.json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install streamdouble
+      shell: bash
+      # Every input reaches the shell through `env:`, never through `${{ }}`
+      # interpolation inside the script. A composite action runs in the
+      # consumer's runner with their credentials, so an input interpolated
+      # directly into a `run:` block is command injection into their CI --
+      # and inputs on a workflow_dispatch or a fork's pull_request are not
+      # necessarily written by someone trusted.
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -n "$VERSION" ]; then
+          python -m pip install --quiet "streamdouble==$VERSION"
+        else
+          python -m pip install --quiet streamdouble
+        fi
+        streamdouble --version
+
+    - name: Place the call
+      id: call
+      shell: bash
+      env:
+        URL: ${{ inputs.url }}
+        AUDIO: ${{ inputs.audio }}
+        MAX_FIRST_AUDIO_MS: ${{ inputs.max-first-audio-ms }}
+        REPEAT: ${{ inputs.repeat }}
+        BASELINE: ${{ inputs.baseline }}
+        SAVE_BASELINE: ${{ inputs.save-baseline }}
+      run: |
+        set -euo pipefail
+        mkdir -p .streamdouble
+
+        args=(call "$URL" --audio "$AUDIO" --json)
+        args+=(--trace .streamdouble/trace.jsonl)
+        [ -n "$MAX_FIRST_AUDIO_MS" ] && args+=(--max-first-audio-ms "$MAX_FIRST_AUDIO_MS")
+        [ -n "$REPEAT" ] && args+=(--repeat "$REPEAT")
+        [ -n "$BASELINE" ] && args+=(--baseline "$BASELINE")
+        [ -n "$SAVE_BASELINE" ] && args+=(--save-baseline "$SAVE_BASELINE")
+
+        # `--json` writes to stdout alone, so it can be captured directly. The
+        # exit code is kept and re-raised after the artifact is written: a
+        # failing run is the one whose trace someone wants.
+        set +e
+        streamdouble "${args[@]}" > .streamdouble/results.json
+        code=$?
+        set -e
+
+        echo "json=.streamdouble/results.json" >> "$GITHUB_OUTPUT"
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        cat .streamdouble/results.json
+        exit $code
+
+    - name: Upload results
+      # Always, because a failed run is exactly the one worth keeping.
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: .streamdouble/
+        if-no-files-found: warn

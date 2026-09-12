@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import audio
+from .aggregate import RunSeries, summarise
 from .metrics import Metrics, Threshold, ThresholdResult, compute, evaluate_thresholds
 from .scenario import Scenario
 from .scenario import load as load_scenario
@@ -50,6 +51,7 @@ __all__ = [
     "ConnectionFailed",
     "TraceConfig",
     "call",
+    "call_series",
     "call_sync",
     "run_scenario",
     "run_scenario_sync",
@@ -303,6 +305,49 @@ async def run_scenario(
     config, recorder = _with_trace(config, trace)
     session = Session(url, scenario=scenario, config=config)
     return await _run(session, url, thresholds, recorder)
+
+
+async def call_series(
+    url: str,
+    *,
+    runs: int,
+    fingerprint: dict[str, Any] | None = None,
+    on_run: Any = None,
+    **kwargs: Any,
+) -> tuple[RunSeries, list[CallReport]]:
+    """Place ``runs`` calls in sequence and summarise them.
+
+    **Sequential, never parallel, and that is not a simplification.** Concurrent
+    calls contend for the same event loop, so they delay each other's frames and
+    inflate each other's pacing lateness -- which would corrupt the very
+    statistics this exists to produce, and do it worse the more runs were asked
+    for. A tool whose numbers get less trustworthy the more data you gather is
+    worse than one that is simply slow.
+
+    A run that cannot connect stops the series: every later run would fail the
+    same way, and twenty identical connection errors are not more informative
+    than one.
+
+    Args:
+        runs: How many calls to place. Must be at least 1.
+        fingerprint: What is being measured, for baseline comparability.
+        on_run: Called with ``(index, report)`` after each run, for progress.
+
+    Returns:
+        The summarised series, and every individual report.
+    """
+    if runs < 1:
+        raise ValueError("runs must be at least 1")
+
+    reports: list[CallReport] = []
+    for index in range(runs):
+        report = await call(url, **kwargs)
+        reports.append(report)
+        if on_run is not None:
+            on_run(index, report)
+
+    payloads = [report.to_dict() for report in reports]
+    return summarise(payloads, fingerprint), reports
 
 
 def _with_trace(

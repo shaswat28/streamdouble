@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 from . import __version__, api, audio
+from . import baseline as baseline_module
+from .aggregate import RunSeries
 from .api import (
     EXIT_ASSERTION_FAILED,
     EXIT_CONNECTION_FAILED,
@@ -31,8 +33,15 @@ from .api import (
     CallReport,
     ConnectionFailed,
 )
+from .baseline import BaselineError
 from .chaos import Impairments
-from .metrics import CONVERSATIONAL_FLOW_MS, Metrics, Threshold, compute
+from .metrics import (
+    CONVERSATIONAL_FLOW_MS,
+    MIN_SAMPLES_FOR_PERCENTILE,
+    Metrics,
+    Threshold,
+    compute,
+)
 from .scenario import ScenarioError
 from .scenario import load as load_scenario
 from .session import SessionConfig, SessionResult
@@ -146,6 +155,50 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
     chaos.add_argument(
         "--chaos-seed", type=int, default=0, metavar="N",
         help="seed for the impairment decisions (default: %(default)s)",
+    )
+
+    series = command.add_argument_group(
+        "repeat runs",
+        "One call is a sample, not a measurement. Repeating gives a "
+        "distribution -- and a stored distribution is something a later run "
+        "can be checked against, which an absolute threshold cannot do.",
+    )
+    series.add_argument(
+        "-n", "--repeat", type=int, default=1, metavar="N",
+        help=(
+            "place N calls in sequence and summarise them. Sequential, never "
+            "parallel: concurrent calls delay each other's frames and would "
+            "corrupt the statistics being gathered (default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--save-baseline", type=Path, metavar="PATH",
+        help="write this run's summary to PATH, to compare later runs against",
+    )
+    series.add_argument(
+        "--baseline", type=Path, metavar="PATH",
+        help=(
+            "compare this run against a saved baseline and fail on a "
+            "regression. Catches 300ms becoming 700ms, which no absolute "
+            "threshold can see"
+        ),
+    )
+    series.add_argument(
+        "--tolerance-pct", type=float, default=baseline_module.DEFAULT_TOLERANCE_PCT,
+        metavar="PCT",
+        help=(
+            "how much worse, proportionally, counts as a regression "
+            "(default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--tolerance-ms", type=float, default=baseline_module.DEFAULT_TOLERANCE_MS,
+        metavar="MS",
+        help=(
+            "how much worse, absolutely, counts as a regression. A change must "
+            "exceed this AND --tolerance-pct, so a 40%% worse 5ms figure is not "
+            "a build failure (default: %(default)s)"
+        ),
     )
 
     gates = command.add_argument_group(
@@ -271,6 +324,15 @@ def trace_from(args: argparse.Namespace) -> TraceConfig | None:
         path=args.trace,
         payloads=args.trace_payloads,
         secrets=args.trace_secrets,
+    )
+
+
+def impairments_from(args: argparse.Namespace) -> Impairments:
+    """The network conditions this run asked for."""
+    return Impairments(
+        loss=args.packet_loss,
+        jitter_ms=args.jitter,
+        latency_ms=args.latency,
     )
 
 
@@ -405,6 +467,71 @@ def report(
         write("  the agent closed the connection before the call finished")
 
 
+def report_series(series: RunSeries, write=print) -> None:
+    """Print a summary of several runs."""
+    write()
+    write(f"  {series.n} runs, {series.failures} failed")
+    write()
+    write(f"  {'':<16}{'median':>10}{'min':>10}{'max':>10}{'p95':>10}{'stddev':>9}  n")
+    for metric in series.metrics:
+        measured = len(metric.measured)
+        counts = f"{measured}/{metric.n}"
+        write(
+            f"  {metric.label:<16}"
+            f"{_cell(metric.median):>10}{_cell(metric.minimum):>10}"
+            f"{_cell(metric.maximum):>10}{_cell(metric.p95):>10}"
+            f"{_cell(metric.stddev):>9}  {counts}"
+        )
+
+    if series.percentiles_withheld:
+        write()
+        write(
+            f"  p95 withheld: {series.n} runs is below the {MIN_SAMPLES_FOR_PERCENTILE} "
+            "needed for a percentile to mean anything"
+        )
+
+    missing = [m for m in series.metrics if m.missing]
+    if missing:
+        write()
+        for metric in missing:
+            write(
+                f"  {metric.label}: {metric.missing} of {metric.n} runs produced no "
+                "measurement, and are excluded from the figures above rather "
+                "than counted as zero"
+            )
+
+
+def report_comparison(comparison, write=print) -> None:
+    """Print a baseline comparison."""
+    write()
+    write("  against the baseline:")
+    for delta in comparison.deltas:
+        if delta.lost_measurement:
+            write(
+                f"    {delta.label:<16} was {delta.before:.1f}, now never measured  "
+                "REGRESSION"
+            )
+        elif not delta.comparable:
+            write(f"    {delta.label:<16} not comparable")
+        else:
+            arrow = "+" if (delta.delta or 0) >= 0 else ""
+            verdict = "  REGRESSION" if delta.regressed else ""
+            write(
+                f"    {delta.label:<16} {delta.before:.1f} -> {delta.after:.1f} "
+                f"({arrow}{delta.delta:.1f}, {arrow}{delta.delta_pct:.0f}%){verdict}"
+            )
+
+
+def _cell(value: float | None) -> str:
+    """A missing figure renders as a dash, never as 0.
+
+    The whole project turns on that distinction, and a table is where it is
+    easiest to lose: a blank or a zero in a column of numbers reads as a
+    measurement.
+    """
+    return "-" if value is None else f"{value:.1f}"
+
+
 def exit_code_for(result: SessionResult, outcomes: list | None = None) -> int:
     """Map a call outcome to an exit code.
 
@@ -466,25 +593,134 @@ async def run_call_command(args: argparse.Namespace) -> int:
         print(f"streamdouble: {args.audio} contains no audio", file=sys.stderr)
         return EXIT_USAGE
 
+    if args.repeat < 1:
+        print("streamdouble: --repeat must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+
     if not args.quiet and not args.json:
+        suffix = f" x{args.repeat}" if args.repeat > 1 else ""
         print(
             f"calling {args.url} with {len(frames)} frames "
-            f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio)"
+            f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio){suffix}"
         )
 
+    config = config_from(args, params)
     try:
+        if args.repeat > 1 or args.save_baseline or args.baseline:
+            return await run_series(args, frames, config)
+
         call_report = await api.call(
             args.url,
             frames=frames,
-            config=config_from(args, params),
+            config=config,
             thresholds=thresholds_from(args),
             trace=trace_from(args),
         )
     except ConnectionFailed as exc:
         print(f"streamdouble: {exc}", file=sys.stderr)
         return EXIT_CONNECTION_FAILED
+    except BaselineError as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_USAGE
 
     return render(args, call_report)
+
+
+async def run_series(args: argparse.Namespace, frames: list[bytes], config) -> int:
+    """Place several calls, summarise them, and compare against a baseline.
+
+    A regression exits 1 -- the existing assertion-failed code -- rather than a
+    new sixth one. The exit-code contract is documented and stable, and a
+    regression is an assertion about a number that turned out false, which is
+    exactly what 1 already means.
+    """
+    fingerprint = baseline_module.fingerprint(
+        audio_path=args.audio if getattr(args, "audio", None) else None,
+        frames=len(frames),
+        chaos_seed=args.chaos_seed,
+        impairments=impairments_from(args).describe(),
+    )
+
+    # Load and check the baseline *before* placing a single call. Everything
+    # comparability depends on -- the clip's hash, the seed, the impairments --
+    # is known now, so discovering a mismatch afterwards means having spent
+    # twenty real calls to learn something that was true before the first one.
+    #
+    # The same principle the scenario loader already follows: validated before
+    # the socket opens, so a typo cannot fail halfway through with the agent
+    # mid-sentence.
+    stored = None
+    if args.baseline:
+        stored = baseline_module.load(args.baseline)
+        baseline_module.check_comparable(stored, RunSeries(metrics=(), fingerprint=fingerprint))
+
+    def progress(index: int, report) -> None:
+        if args.quiet or args.json or args.repeat < 2:
+            return
+        figure = report.time_to_first_audio_ms
+        rendered = "no audio" if figure is None else f"{figure:.0f} ms"
+        print(f"  run {index + 1}/{args.repeat}: {rendered}")
+
+    series, reports = await api.call_series(
+        args.url,
+        runs=args.repeat,
+        fingerprint=fingerprint,
+        on_run=progress,
+        frames=frames,
+        config=config,
+        thresholds=thresholds_from(args),
+        trace=trace_from(args),
+    )
+    payloads = [report.to_dict() for report in reports]
+
+    comparison = None
+    if stored is not None:
+        comparison = baseline_module.compare(
+            stored,
+            series,
+            tolerance_pct=args.tolerance_pct,
+            tolerance_ms=args.tolerance_ms,
+        )
+
+    if args.save_baseline:
+        baseline_module.save(args.save_baseline, series, payloads)
+
+    if args.json:
+        payload = {
+            "series": series.to_dict(),
+            "runs": payloads,
+        }
+        if comparison is not None:
+            payload["comparison"] = comparison.to_dict()
+        payload["exit_code"] = _series_exit_code(reports, comparison)
+        print(json.dumps(payload, indent=2))
+    elif not args.quiet:
+        report_series(series)
+        if comparison is not None:
+            report_comparison(comparison)
+        if args.save_baseline:
+            print()
+            print(f"wrote {args.save_baseline} (baseline)")
+
+    return _series_exit_code(reports, comparison)
+
+
+def _series_exit_code(reports: list, comparison) -> int:
+    """The worst outcome across the series wins.
+
+    A regression is EXIT_ASSERTION_FAILED, the same as a failed threshold,
+    because it is the same kind of fact: a number was measured and found
+    wanting. A more definite outcome in any single run -- a protocol violation,
+    a timeout -- outranks it, on the same severity ordering one call uses.
+    """
+    for code in (EXIT_PROTOCOL_VIOLATION, EXIT_TIMEOUT):
+        if any(report.exit_code == code for report in reports):
+            return code
+    if comparison is not None and not comparison.passed:
+        return EXIT_ASSERTION_FAILED
+    if any(report.exit_code != EXIT_OK for report in reports):
+        return EXIT_ASSERTION_FAILED
+    return EXIT_OK
 
 
 async def run_scenario_command(args: argparse.Namespace) -> int:
