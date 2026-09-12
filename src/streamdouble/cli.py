@@ -42,6 +42,7 @@ from .metrics import (
     Threshold,
     compute,
 )
+from .protocol import TRACK_INBOUND, TRACK_OUTBOUND
 from .scenario import ScenarioError
 from .scenario import load as load_scenario
 from .session import SessionConfig, SessionResult
@@ -138,6 +139,54 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
     command.add_argument(
         "--json", action="store_true",
         help="emit metrics as JSON on stdout instead of a human summary",
+    )
+
+    fork = command.add_argument_group(
+        "stream mode",
+        "By default streamdouble simulates <Connect><Stream>, the "
+        "bidirectional call an agent answers. A <Start><Stream> fork is the "
+        "other half of Media Streams: one-way, no channel back, and what "
+        "transcription and compliance-recording apps consume.",
+    )
+    fork.add_argument(
+        "--fork", action="store_true",
+        help=(
+            "simulate a <Start><Stream> fork rather than a bidirectional call. "
+            "No mark echo and no clear, because Twilio sends marks only on "
+            "bidirectional streams"
+        ),
+    )
+    fork.add_argument(
+        "--track", choices=["inbound", "outbound", "both"], default="inbound",
+        help=(
+            "which tracks the fork carries. 'both' needs --agent-audio, since "
+            "on a real fork Twilio supplies the agent's audio too "
+            "(default: %(default)s)"
+        ),
+    )
+    fork.add_argument(
+        "--agent-audio", type=Path, metavar="PATH",
+        help=(
+            "WAV for the outbound track of a fork -- what the agent said. "
+            "Required with --track outbound or both"
+        ),
+    )
+    fork.add_argument(
+        "--strict-fork", action="store_true",
+        help=(
+            "treat an app sending media back on a fork as a protocol "
+            "violation rather than a warning. Off by default because the rule "
+            "is inferred: the Twilio docs state the bidirectional case and are "
+            "silent on this one"
+        ),
+    )
+    fork.add_argument(
+        "--record-stereo", type=Path, metavar="PATH",
+        help=(
+            "write both sides of the call to one WAV, caller left and agent "
+            "right. The agent's channel is placed at the instants its audio "
+            "arrived, so a front-loading agent looks front-loaded"
+        ),
     )
 
     chaos = command.add_argument_group(
@@ -365,7 +414,64 @@ def impairments_from(args: argparse.Namespace) -> Impairments:
     )
 
 
-def config_from(args: argparse.Namespace, params: dict[str, str]) -> SessionConfig:
+class UsageError(Exception):
+    """The command line asks for something that cannot be done."""
+
+
+def agent_frames_from(args: argparse.Namespace) -> list[bytes]:
+    """Load and validate the outbound track of a fork.
+
+    Shared by both subcommands rather than living in ``call``. The fork flags
+    are on the *shared* option set, so ``scenario`` accepted every one of them
+    and then silently ignored ``--agent-audio`` -- declaring an outbound track
+    in its start frame and sending nothing on it for the whole call. Gate 8
+    found that; the fix is for there to be one place this is done.
+
+    Raises:
+        UsageError: The combination cannot be honoured.
+    """
+    needs_outbound = args.fork and TRACK_OUTBOUND in tracks_from(args)
+    if needs_outbound and not args.agent_audio:
+        # Refused rather than filled with silence. On a real fork Twilio copies
+        # the agent's own audio to the app, so a fork carrying an outbound
+        # track of silence is not a simpler simulation -- it is a wrong one,
+        # and the app under test would conclude the agent never spoke.
+        raise UsageError(
+            f"--track {args.track} needs --agent-audio: on a fork Twilio "
+            "supplies the agent's audio too, and streamdouble is standing in "
+            "for Twilio"
+        )
+
+    if args.agent_audio and not args.fork:
+        raise UsageError(
+            "--agent-audio only means something with --fork; a bidirectional "
+            "call gets the agent's audio from the agent"
+        )
+
+    if not args.agent_audio:
+        return []
+
+    try:
+        frames = audio.wav_to_ulaw_frames(args.agent_audio)
+    except audio.AudioError as exc:
+        raise UsageError(str(exc)) from exc
+    if not frames:
+        raise UsageError(f"{args.agent_audio} contains no audio")
+    return frames
+
+
+def tracks_from(args: argparse.Namespace) -> list[str]:
+    """Which tracks a fork carries, in the WebSocket spelling."""
+    if args.track == "both":
+        return [TRACK_INBOUND, TRACK_OUTBOUND]
+    return [args.track]
+
+
+def config_from(
+    args: argparse.Namespace,
+    params: dict[str, str],
+    agent_frames: list[bytes] | None = None,
+) -> SessionConfig:
     """Build a SessionConfig from parsed arguments."""
     return SessionConfig(
         response_timeout_s=args.response_timeout,
@@ -373,12 +479,12 @@ def config_from(args: argparse.Namespace, params: dict[str, str]) -> SessionConf
         max_drain_s=args.max_drain,
         echo_marks=not args.no_echo_marks,
         custom_parameters=params,
-        impairments=Impairments(
-            loss=args.packet_loss,
-            jitter_ms=args.jitter,
-            latency_ms=args.latency,
-        ),
+        impairments=impairments_from(args),
         chaos_seed=args.chaos_seed,
+        fork=args.fork,
+        tracks=tracks_from(args),
+        agent_frames=list(agent_frames or []),
+        strict_fork=args.strict_fork,
     )
 
 
@@ -482,6 +588,11 @@ def report(
         for outcome in outcomes:
             write(f"  {outcome.describe()}")
 
+    if result.warnings:
+        write()
+        for note in result.warnings:
+            write(f"  ! {note}")
+
     if metrics.violations:
         write()
         write(f"  {len(metrics.violations)} protocol violation(s):")
@@ -572,6 +683,22 @@ def exit_code_for(result: SessionResult, outcomes: list | None = None) -> int:
     return CallReport(result=result, metrics=compute(result), thresholds=outcomes or []).exit_code
 
 
+def _caller_audio(args: argparse.Namespace) -> bytes:
+    """The caller's side of the call, as mu-law, for the stereo recording.
+
+    Re-read from the source WAV rather than captured during the call. What went
+    out is a deterministic function of the file, and keeping a second copy of
+    it on the session would add memory to the hot path for something only a
+    recording wants.
+    """
+    if not getattr(args, "audio", None):
+        return b""
+    try:
+        return b"".join(audio.wav_to_ulaw_frames(args.audio))
+    except audio.AudioError:
+        return b""
+
+
 def render(args: argparse.Namespace, call_report: CallReport) -> int:
     """Render a finished call and return its exit code.
 
@@ -590,6 +717,15 @@ def render(args: argparse.Namespace, call_report: CallReport) -> int:
             file=sys.stderr,
         )
 
+    if args.record_stereo and not api.save_stereo(
+        call_report, _caller_audio(args), args.record_stereo
+    ):
+        print(
+            f"streamdouble: no audio received, so {args.record_stereo} was "
+            "not written",
+            file=sys.stderr,
+        )
+
     if args.json:
         # JSON goes to stdout alone, so a pipeline can consume it directly
         # without having to strip a human preamble. Everything else this
@@ -601,6 +737,8 @@ def render(args: argparse.Namespace, call_report: CallReport) -> int:
             print(f"\nwrote {args.out} ({result.audio_duration_s:.2f}s)")
         if call_report.trace_path:
             print(f"wrote {call_report.trace_path} (frame trace)")
+        if args.record_stereo and call_report.result.audio_received:
+            print(f"wrote {args.record_stereo} (stereo: caller left, agent right)")
 
     return call_report.exit_code
 
@@ -620,6 +758,12 @@ async def run_call_command(args: argparse.Namespace) -> int:
 
     if not frames:
         print(f"streamdouble: {args.audio} contains no audio", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        agent_frames = agent_frames_from(args)
+    except UsageError as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
     if args.repeat < 1:
@@ -651,7 +795,7 @@ async def run_call_command(args: argparse.Namespace) -> int:
             f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio){suffix}"
         )
 
-    config = config_from(args, params)
+    config = config_from(args, params, agent_frames)
     try:
         if args.repeat > 1 or args.save_baseline or args.baseline:
             return await run_series(args, frames, config)
@@ -804,6 +948,12 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
         print(f"streamdouble: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
+    try:
+        agent_frames = agent_frames_from(args)
+    except UsageError as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
     if not args.quiet and not args.json:
         print(script.describe())
 
@@ -811,7 +961,7 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
         call_report = await api.run_scenario(
             args.url,
             script,
-            config=config_from(args, params),
+            config=config_from(args, params, agent_frames),
             thresholds=thresholds_from(args),
             trace=trace_from(args),
         )

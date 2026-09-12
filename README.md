@@ -329,6 +329,51 @@ Packet loss is modelled as audio Twilio never received, so the agent sees
 WebSocket, which is TCP: a frame *cannot* vanish in transit. `chaos.py` explains
 the reasoning, and flags it as an inference the docs do not cover.
 
+## Hear both sides of the call
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --record-stereo call.wav
+```
+
+Caller on the left, agent on the right, in one file.
+
+**The agent's channel is placed at the instants its audio arrived**, with real
+silence in the gaps — not concatenated. That distinction is the whole point.
+Agents batch their outbound audio: the bug this tool is best known for finding
+was an agent sending 9.5 seconds of speech in 0.85 seconds, leaving the caller
+listening for another 8.7 seconds while the agent believed it had finished.
+Concatenating those frames would render that as a smooth, perfectly-timed reply
+— a picture of the opposite of the bug. Placed at arrival times, you can hear
+the burst and the silence after it.
+
+## Fork mode: the other half of Media Streams
+
+`<Connect><Stream>` is the bidirectional call an agent answers, and it is what
+everything above simulates. `<Start><Stream>` is the other half — a one-way
+fork, which is what transcription and compliance-recording apps consume.
+
+```bash
+streamdouble call ws://localhost:8000/media-stream-fork --audio hello.wav \
+  --fork --track both --agent-audio agent-reply.wav
+```
+
+A fork is one-way, and two things follow:
+
+- **No mark echo, and no `clear`.** The Twilio docs say verbatim that "Twilio
+  sends the `mark` event only during bidirectional Streams", so a simulator
+  that echoed marks here would be inventing a message real Twilio never sends.
+- **`--agent-audio` is required for an outbound track.** On a real fork Twilio
+  copies the agent's *own* audio to the app, so streamdouble has to supply both
+  halves. Streaming silence instead would not be a simpler simulation, it would
+  be a wrong one.
+
+An app that sends media back on a fork gets a **warning**, and the run still
+passes. The Twilio docs state the bidirectional case affirmatively and say
+nothing about this one, so treating it as a violation is streamdouble's
+inference rather than a documented rule — and this project does not fail your
+build on an inference unless you ask. `--strict-fork` is the asking.
+
 ## How this compares
 
 Everything below does something streamdouble does not, and most of them are the

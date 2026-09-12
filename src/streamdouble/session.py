@@ -30,7 +30,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +40,9 @@ from . import audio
 from .chaos import Impairments, Network
 from .pacer import Pacer, PacingStats
 from .protocol import (
+    BIDIRECTIONAL_TRACKS,
+    TRACK_INBOUND,
+    TRACK_OUTBOUND,
     InboundClear,
     InboundMark,
     InboundMedia,
@@ -182,6 +185,20 @@ class SessionResult:
     first_audio_at: float | None = None
     #: Set when the agent produced no audio within the response timeout.
     timed_out: bool = False
+    #: How many of ``frames_sent`` went on the outbound track of a fork.
+    #:
+    #: Published separately rather than folded in, so "the caller sent 2.00s of
+    #: audio" and "150 frames went over the wire" are both answerable. They are
+    #: different questions and a single number cannot answer both.
+    outbound_frames_sent: int = 0
+    #: Things worth telling the user that are not violations.
+    #:
+    #: The distinction is the point. A violation is something the Twilio
+    #: documentation says is wrong; a warning is something *this tool* infers
+    #: is wrong. Reporting an inference as a violation would fail someone's
+    #: build on streamdouble's reading of a silence in the docs, which is not a
+    #: thing this project is willing to do without being asked.
+    warnings: list[str] = field(default_factory=list)
     #: Set when the agent closed the socket before the call was finished.
     closed_early: bool = False
 
@@ -244,6 +261,30 @@ class SessionConfig:
     #: Seed for the impairment decisions. Fixed by default so a chaos run is
     #: reproducible: when a bad network finds a bug, the seed is the repro.
     chaos_seed: int = 0
+    #: Simulate a ``<Start><Stream>`` fork rather than a ``<Connect><Stream>``.
+    #:
+    #: A fork is one-way: Twilio streams audio *to* the app and the app has no
+    #: channel back. Two consequences, and neither is optional:
+    #:
+    #: * **No mark echo, and no ``clear``.** The documentation says verbatim
+    #:   that "Twilio sends the ``mark`` event only during bidirectional
+    #:   Streams", so echoing marks on a fork would be the simulator inventing
+    #:   a message real Twilio never sends. ``echo_marks`` is forced off.
+    #: * **Frames the app sends back are reported.** As a warning by default
+    #:   and a violation under ``strict_fork``, because that rule is inferred
+    #:   rather than documented -- see ``protocol._is_unidirectional_violation``.
+    fork: bool = False
+    #: Which tracks a fork carries. Ignored unless ``fork`` is set.
+    tracks: list[str] = field(default_factory=lambda: list(BIDIRECTIONAL_TRACKS))
+    #: Audio for the ``outbound`` track -- what the agent said, which on a real
+    #: fork Twilio has generated and is copying to the app. Required when the
+    #: fork carries an outbound track, because the simulator is standing in for
+    #: Twilio and must supply both halves.
+    agent_frames: list[bytes] = field(default_factory=list)
+    #: Treat an app's outbound frames on a fork as violations rather than
+    #: warnings. Off by default: the rule is an inference, and this project
+    #: does not fail a build on an inference without being asked.
+    strict_fork: bool = False
     #: Where to record every frame, in both directions. ``None`` disables it.
     #:
     #: The trace is accumulated in memory and written once the socket is
@@ -280,10 +321,28 @@ class Session:
         self.config = config or SessionConfig()
         self.clock = clock
 
+        if self.config.fork and self.config.echo_marks:
+            # Not an error, and not silent either. Echoing marks on a fork
+            # would have the simulator sending a message real Twilio never
+            # sends there, so the default cannot stand -- but a caller who left
+            # echo_marks at its default has not asked for anything wrong, so
+            # this is a correction rather than a refusal.
+            self.config = replace(self.config, echo_marks=False)
+
         self.encoder = MediaStreamEncoder(identity)
         self.pacer = Pacer(audio.FRAME_MS / 1000, clock=clock)
         self.network = Network(self.config.impairments, seed=self.config.chaos_seed)
         self.result = SessionResult(identity=self.encoder.identity, events=[])
+
+        # Position in the outbound track, for a two-track fork.
+        #
+        # On the session rather than inside the send loop, and that is the
+        # whole of gate 8's first finding. Pairing by the loop's own index
+        # restarted the agent's audio from the beginning on every scenario
+        # step, so `say` then `wait` forked the agent's opening words twice --
+        # a transcript of something that never happened. A plain call has one
+        # step, which is why every test passed.
+        self._outbound_cursor = 0
 
         self._closing = asyncio.Event()
         self._first_audio = asyncio.Event()
@@ -455,11 +514,46 @@ class Session:
                 break
             await self._run_step(connection, step)
 
+        await self._drain_outbound_track(connection)
+
         self._record(
             "sent_all_media",
             frames=self.result.frames_sent,
             dropped=self.result.frames_dropped,
         )
+
+    async def _drain_outbound_track(self, connection: Any) -> None:
+        """Send whatever is left of the agent's track after the caller stops.
+
+        An agent talking for longer than the caller is the normal shape of a
+        call, not an edge case -- a short question and a long answer. Driving
+        the interleave from the caller's frames alone truncated the agent's
+        side at the moment the caller fell silent, discarding the rest without
+        a word, which for a compliance-recording consumer means archiving a
+        call that was never made.
+
+        Paced like everything else, because these frames occupy real time on a
+        real fork.
+        """
+        while self._outbound_remaining and not self._hung_up:
+            await self.pacer.wait()
+            if self.clock() >= self._call_deadline:
+                self._record("max_call_reached", limit_s=self.config.max_call_s)
+                self._hung_up = True
+                return
+
+            frame = self._next_outbound_frame()
+            if frame is None:
+                return
+            try:
+                await self._send(
+                    connection, self.encoder.media(frame, track=TRACK_OUTBOUND)
+                )
+            except websockets.ConnectionClosed:
+                self._hung_up = True
+                raise
+            self.result.frames_sent += 1
+            self.result.outbound_frames_sent += 1
 
     async def _run_step(self, connection: Any, step: Step) -> None:
         """Execute one scenario step."""
@@ -488,8 +582,44 @@ class Session:
             self._record("caller_hung_up")
             await connection.close()
 
+    @property
+    def _carries_outbound(self) -> bool:
+        return self.config.fork and TRACK_OUTBOUND in self.config.tracks
+
+    def _next_outbound_frame(self) -> bytes | None:
+        """The next frame of the agent's track, or ``None`` when it is spent.
+
+        Consumes a cursor held on the session, so the track runs continuously
+        across every step of a scenario rather than restarting with each one.
+
+        Returns ``None`` once the agent's audio is exhausted rather than
+        padding: a real fork carries whatever each side actually produced, and
+        the two are rarely the same length.
+        """
+        if not self._carries_outbound:
+            return None
+        if self._outbound_cursor >= len(self.config.agent_frames):
+            return None
+        frame = self.config.agent_frames[self._outbound_cursor]
+        self._outbound_cursor += 1
+        return frame
+
+    @property
+    def _outbound_remaining(self) -> int:
+        if not self._carries_outbound:
+            return 0
+        return max(0, len(self.config.agent_frames) - self._outbound_cursor)
+
     async def _stream_frames(self, connection: Any, frames: Sequence[bytes]) -> None:
-        """Send frames in real time, through the impairment layer."""
+        """Send frames in real time, through the impairment layer.
+
+        On a two-track fork each inbound frame is followed immediately by the
+        outbound frame for the same instant. Both go out inside one pacer tick
+        rather than one per tick: they represent the same 20 ms of wall time on
+        a real call, and spacing them a tick apart would halve the effective
+        frame rate of each track and make every timing figure wrong by a factor
+        of two.
+        """
         for frame in frames:
             await self.pacer.wait()
 
@@ -516,11 +646,24 @@ class Session:
                 await asyncio.sleep(delay)
 
             try:
-                await self._send(connection, self.encoder.media(frame))
+                await self._send(
+                    connection, self.encoder.media(frame, track=TRACK_INBOUND)
+                )
+                self.result.frames_sent += 1
+
+                paired = self._next_outbound_frame()
+                if paired is not None:
+                    await self._send(
+                        connection, self.encoder.media(paired, track=TRACK_OUTBOUND)
+                    )
+                    # Counted too. 150 frames on the wire reported as 100 is a
+                    # number somebody eventually reconciles against a packet
+                    # capture, and finds wrong.
+                    self.result.frames_sent += 1
+                    self.result.outbound_frames_sent += 1
             except websockets.ConnectionClosed:
                 self._hung_up = True
                 raise
-            self.result.frames_sent += 1
 
     async def _stream_silence(self, connection: Any, seconds: float) -> None:
         """Stream silence for a fixed duration.
@@ -625,7 +768,13 @@ class Session:
         arrived_at = self.clock()
 
         try:
-            parsed = parse_outbound(message, expected_stream_sid=self.encoder.identity.stream_sid)
+            parsed = parse_outbound(
+                message,
+                expected_stream_sid=self.encoder.identity.stream_sid,
+                # Strict only. Outside it the frame parses normally and a
+                # warning is recorded instead -- see SessionResult.warnings.
+                unidirectional=self.config.fork and self.config.strict_fork,
+            )
         except ProtocolViolation as violation:
             # Recorded, not raised. One malformed frame should not end the call:
             # the user wants the whole picture, and a tool that aborts on the
@@ -643,6 +792,23 @@ class Session:
             if self.config.trace is not None:
                 self.config.trace.note_in(message, arrived_at)
             return
+
+        if (
+            self.config.fork
+            and not self.config.strict_fork
+            and isinstance(parsed, (InboundMedia, InboundMark, InboundClear))
+        ):
+            frame_type = type(parsed).__name__.removeprefix("Inbound").lower()
+            note = (
+                f"the app sent a '{frame_type}' frame on a <Start><Stream> fork, "
+                "which is one-way -- it would go nowhere on a real call. "
+                "Reported as a warning rather than a violation because the "
+                "Twilio docs state the bidirectional case and are silent on "
+                "this one; pass --strict-fork to fail on it."
+            )
+            if note not in self.result.warnings:
+                self.result.warnings.append(note)
+            self._record("fork_warning", at=arrived_at, frame_type=frame_type)
 
         # Hand the already-parsed frame to the trace rather than letting it
         # run json.loads a second time. Gate 6 found the duplicate: real agents
@@ -809,7 +975,16 @@ class Session:
         self._record("drain_complete", reason="max_drain_reached")
 
     async def _await_first_audio(self) -> bool:
-        """Wait for the agent's first audio. False if it never came."""
+        """Wait for the agent's first audio. False if it never came.
+
+        On a fork there is nothing to wait for and nothing to report. The app
+        has no channel back, so silence is the correct and expected outcome --
+        and calling it a response timeout would fail every well-behaved fork
+        consumer in the world for doing exactly the right thing. Found by
+        running one: a clean fork call exited 2 with "the agent sent no audio".
+        """
+        if self.config.fork:
+            return True
         if self._first_audio.is_set():
             return True
         try:
@@ -824,7 +999,12 @@ class Session:
 
 
 def _start_kwargs(config: SessionConfig) -> dict[str, Any]:
-    return {"custom_parameters": config.custom_parameters} if config.custom_parameters else {}
+    kwargs: dict[str, Any] = {}
+    if config.custom_parameters:
+        kwargs["custom_parameters"] = config.custom_parameters
+    if config.fork:
+        kwargs["tracks"] = list(config.tracks)
+    return kwargs
 
 
 def _dumps(frame: dict[str, Any]) -> str:

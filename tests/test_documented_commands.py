@@ -27,7 +27,9 @@ from pathlib import Path
 
 import pytest
 
+from streamdouble import baseline as baseline_module
 from streamdouble import cli
+from streamdouble.aggregate import summarise
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -103,6 +105,31 @@ def test_a_documented_command_runs(document, command, server, tmp_path):
     argument produce. Anything else means the command was understood and the
     call was attempted, which is all this is checking.
     """
+    # A baseline for the documented --baseline command to compare against.
+    #
+    # Until output paths were redirected into tmp_path, that command passed
+    # only because an *earlier* documented command had left a baseline.json in
+    # the repository root -- so the test depended on its own litter, and
+    # cleaning up the litter broke it. Built here explicitly, with a
+    # fingerprint matching the clip the substitutions below use, because a
+    # baseline recorded from a different clip is correctly refused.
+    baseline_path = tmp_path / "baseline.json"
+    clip = ROOT / "fixtures" / "speech_8k.wav"
+    runs = [
+        {"time_to_first_audio_ms": 180.0, "delivery_ratio": 1.1, "exit_code": 0}
+        for _ in range(3)
+    ]
+    baseline_module.save(
+        baseline_path,
+        summarise(
+            runs,
+            baseline_module.fingerprint(
+                audio_path=clip, frames=100, chaos_seed=0, impairments="none"
+            ),
+        ),
+        runs,
+    )
+
     scenario_file = tmp_path / "example.yaml"
     scenario_file.write_text(
         "name: documented\n"
@@ -123,19 +150,34 @@ def test_a_documented_command_runs(document, command, server, tmp_path):
 
         if part.startswith("ws://") or part.startswith("wss://"):
             rewritten.append(server)
-        elif part == "--audio":
-            rewritten += ["--audio", str(ROOT / "fixtures" / "speech_8k.wav")]
+        elif part in {"--audio", "--agent-audio"}:
+            # Both take a WAV that is a placeholder in prose. --agent-audio was
+            # missed when fork mode was documented, and the README's fork
+            # example then failed here on a file that never existed -- which is
+            # this test working, but for the wrong reason.
+            rewritten += [part, str(ROOT / "fixtures" / "speech_8k.wav")]
             skip_next = True
         elif part.endswith(".yaml"):
             rewritten.append(str(scenario_file))
-        elif part == "--out":
-            rewritten += ["--out", str(tmp_path / "reply.wav")]
+        elif part == "--baseline":
+            rewritten += ["--baseline", str(baseline_path)]
+            skip_next = True
+        elif part in {"-n", "--repeat"}:
+            # The README honestly recommends 20 runs; running 20 real calls per
+            # documented command would dominate the suite. The number is not
+            # what this test checks -- that the command parses and runs is.
+            rewritten += [part, "3"]
+            skip_next = True
+        elif part in {"--out", "--record-stereo", "--trace", "--save-baseline"}:
+            # Output paths: redirected into tmp_path so a documented command
+            # cannot litter the repository when the suite runs. call.jsonl and
+            # baseline.json both got committed once before this existed.
+            rewritten += [part, str(tmp_path / f"out{index}{Path(parts[index + 2]).suffix}")]
             skip_next = True
         elif part in PLACEHOLDER_CLIPS:
             rewritten.append(str(ROOT / "fixtures" / "speech_8k.wav"))
         else:
             rewritten.append(part)
-        del index
 
     # Keep the runs short; correctness of the output is covered elsewhere.
     rewritten += ["--quiet-period", "0.3", "--max-drain", "3", "--response-timeout", "3"]
