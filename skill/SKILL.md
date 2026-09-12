@@ -97,6 +97,56 @@ streamdouble call ws://localhost:8000/media-stream --audio clip.wav \
 at 0-200 ms; 800 ms is an industry rule of thumb rather than a research
 finding, so treat it as a default, not a law.
 
+**Has it got slower than it used to be?**
+
+An absolute threshold cannot see an agent that went from 300 ms to 700 ms: it
+is more than twice as slow and still inside an 800 ms limit. Record a baseline
+on a known-good build, then compare.
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio clip.wav \
+  -n 20 --save-baseline baseline.json
+```
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio clip.wav \
+  -n 20 --baseline baseline.json
+```
+
+Three things worth knowing before reporting a result from this:
+
+- **`-n` is a distribution, not a retry.** There is no `--retries` and there
+  will not be. Never re-run a failing comparison hoping for a pass -- that is
+  the one use of repetition this tool refuses to support, because it hides a
+  flaky agent.
+- **It refuses to compare incomparable runs.** A different clip, seed or set of
+  impairments exits 4 with an explanation. That is a setup mistake, not a
+  finding about the agent, and should not be reported as one.
+- **Below 20 runs the P95 is withheld**, and the output says so. Do not fill
+  the gap with the maximum.
+
+**Does it belong in the existing test suite?**
+
+If the project already has pytest, prefer this to shelling out. Installing the
+package registers the fixture; no configuration is needed beyond pytest-asyncio.
+
+```python
+async def test_the_agent_answers_quickly(simulated_call):
+    report = await simulated_call(AGENT_URL, audio="clip.wav")
+    assert report.spoke
+    assert report.time_to_first_audio_ms < 800
+```
+
+Assert `report.spoke` *before* asserting on the latency. An agent that never
+spoke has `time_to_first_audio_ms` of `None`, and the comparison raises rather
+than passing -- which is deliberate, and which the plugin explains at the
+failure.
+
+The suite needs `asyncio_mode = auto` and
+`asyncio_default_fixture_loop_scope = function` in its pytest config. Without
+the second, a project running warnings as errors fails collection before any
+test runs.
+
 **Does it handle a bad connection?**
 
 ```bash
@@ -138,6 +188,62 @@ steps:
   - wait_for: audio
   - hangup
 ```
+
+## When the simulation itself looks wrong
+
+If the agent behaves in a way that suggests streamdouble is sending something
+wrong, capture the frames before theorising:
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio clip.wav \
+  --trace trace.jsonl
+```
+
+One JSON object per frame, both directions, with timings. This is the artefact
+to attach to a bug report against streamdouble, and the most valuable report
+this project can receive is one that says where the simulation is wrong.
+
+Audio payloads are excluded by default (a minute of call is ~30 MB of base64)
+and `customParameters` values are redacted, since that is where agents' shared
+secrets live and a trace exists to be sent to someone else. `--trace-payloads`
+and `--trace-secrets` opt out of each -- **do not pass `--trace-secrets` on an
+agent you did not configure yourself.**
+
+## Recording both sides to listen to
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio clip.wav \
+  --record-stereo call.wav
+```
+
+Caller left, agent right. The agent's channel sits at the instants its audio
+*arrived*, with real silence between bursts -- so an agent that front-loads its
+audio sounds front-loaded. Do not describe this file as "what the caller heard":
+it is a picture of delivery, and the two differ by exactly the playback tail the
+metrics report.
+
+## Forks: the other half of Media Streams
+
+Everything above simulates `<Connect><Stream>`, the bidirectional call an agent
+answers. `<Start><Stream>` is a one-way fork -- what transcription and
+compliance-recording apps consume.
+
+```bash
+streamdouble call ws://localhost:8000/media-stream-fork --audio clip.wav \
+  --fork --track both --agent-audio reply.wav
+```
+
+- A fork has **no mark echo and no `clear`**, because Twilio sends marks only
+  on bidirectional streams. An app waiting for one here is built on an
+  assumption that does not hold, and that is worth reporting.
+- **Silence from a fork consumer is success**, not a timeout. It has no channel
+  to answer on.
+- `--track both` **requires `--agent-audio`**: on a real fork Twilio supplies
+  the agent's own audio too.
+- An app that sends media back gets a **warning**, and the run still passes.
+  Report that as "streamdouble believes this is wrong, and the Twilio docs do
+  not say either way" -- it is an inference, not a documented rule.
+  `--strict-fork` turns it into a failure for someone who wants that.
 
 ## Diagnosing what comes back
 
