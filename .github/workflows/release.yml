@@ -53,6 +53,7 @@ jobs:
           for name in [
               'aggregate', 'api', 'audio', 'baseline', 'chaos', 'cli', 'g711',
               'metrics', 'pacer', 'protocol', 'scenario', 'session', 'trace',
+              'tracereport',
           ]:
               importlib.import_module('streamdouble.' + name)
           print('all modules import:', streamdouble.__version__)
