@@ -56,6 +56,7 @@ __all__ = [
     "run_scenario",
     "run_scenario_sync",
     "save_reply",
+    "save_stereo",
 ]
 
 #: Exit codes, duplicated from nowhere -- this is their definition, and
@@ -397,6 +398,55 @@ def run_scenario_sync(url: str, scenario: Scenario | str | Path, **kwargs: Any) 
     """Blocking :func:`run_scenario`."""
     _refuse_inside_a_loop("run_scenario_sync", "run_scenario")
     return asyncio.run(run_scenario(url, scenario, **kwargs))
+
+
+def save_stereo(report: CallReport, caller_audio: bytes, path: str | Path) -> bool:
+    """Write both sides of the call to one stereo WAV: caller left, agent right.
+
+    The agent's channel is placed at the instants its audio *arrived*, with
+    real silence in the gaps -- not concatenated. See
+    :func:`streamdouble.audio.write_stereo_wav` for why that distinction is
+    load-bearing rather than cosmetic.
+
+    Returns False and writes nothing when the agent never spoke, for the same
+    reason :func:`save_reply` does: a file containing only the caller would
+    look like a recording of a call the agent was silent on, which is true but
+    indistinguishable from a bug in the recorder.
+    """
+    if not report.result.audio_received:
+        return False
+
+    audio.write_stereo_wav(caller_audio, _agent_segments(report), path)
+    return True
+
+
+def _agent_segments(report: CallReport) -> list[tuple[float, bytes]]:
+    """Slice the accumulated reply back into (arrival offset, bytes) pieces.
+
+    The session records an arrival instant and a byte count per inbound media
+    frame, and appends the payloads to one buffer in that same order -- so the
+    buffer can be cut back up by walking the events. Reconstructing rather than
+    storing each payload twice keeps the hot path unchanged, which matters because
+    that path is the one gate 2 and gate 6 both found being slowed down.
+
+    A frame whose bytes were dropped by the audio cap is skipped: the offsets
+    of everything after it would otherwise slide, and a stereo file that is
+    quietly out of sync is worse than one that is short.
+    """
+    result = report.result
+    buffer = bytes(result.audio_received)
+    origin = result.started_at
+
+    segments: list[tuple[float, bytes]] = []
+    cursor = 0
+    for event in result.events_of("media_received"):
+        size = int(event.detail.get("bytes", 0))
+        if size <= 0 or cursor + size > len(buffer):
+            break
+        segments.append((max(0.0, event.at - origin), buffer[cursor : cursor + size]))
+        cursor += size
+
+    return segments
 
 
 def save_reply(report: CallReport, path: str | Path) -> bool:

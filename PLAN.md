@@ -3,11 +3,13 @@
 > A framework-agnostic Twilio Media Streams simulator. Test your voice agent's
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-**Status:** All six phases complete, gates 1-4 passed. Public and published on
-PyPI. Gate 5's clean-install half is done -- the package was installed from
-PyPI into an empty virtualenv and exercised; what is still owed is someone who
-is not the author reading the README cold. Phases 7-9 are planned -- see
-the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap).
+**Status:** All nine phases complete, gates 1-8 passed. Public on GitHub.
+PyPI is deliberately still at 0.1.0 -- nothing publishes until the roadmap is
+done, and it now is, so a release is the next decision rather than the next
+task. Gate 5's clean-install half is done; what is still owed there is a human
+who is not the author reading the README cold.
+See the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap) for
+phases 7-9.
 **License:** Apache-2.0
 **Language:** Python 3.11+
 **Name:** `streamdouble` — `dialtone` was taken on PyPI. See [Progress](#progress).
@@ -568,6 +570,14 @@ https://www.twilio.com/docs/voice/media-streams/websocket-messages:
 - `examples/echo_agent.py` gains a fork endpoint that, in one mode, wrongly
   tries to talk back.
 
+> ### ✅ REVIEW GATE 8 — Fidelity, and the golden file — PASSED
+>
+> Ran. 4 findings, all fixed and mutation-verified in
+> `tests/test_review_gate_8.py`. The golden file passed unregenerated, which
+> was this gate's headline risk. See [Gate 8](#gate-8).
+>
+> <details><summary>Original gate text</summary>
+>
 > ### ⛔ REVIEW GATE 8 — Fidelity, and the golden file
 > `/code-review high`. Security review not warranted: no new untrusted input,
 > no new network surface.
@@ -582,6 +592,8 @@ https://www.twilio.com/docs/voice/media-streams/websocket-messages:
 > literals ever confused? Does the stereo writer survive a batching agent --
 > 9 s of audio sent in 0.9 s must span 9 s of file. Does fork mode hang waiting
 > for a mark echo that will never come?
+>
+> </details>
 
 ### Deliberately dropped, with the reasoning
 
@@ -1006,6 +1018,139 @@ no background noise and no trailing off mid-sentence. Real recorded human speech
 remains worth having, and remains listed above as an open item -- not because
 this check was weak, but because it is the *input* that is synthetic, not the
 measurement.
+
+## Gate 8
+
+*2026-09-12.*
+
+**The golden file passed unregenerated.** That was the risk this gate was
+written around: Phase 9 is the first phase since Phase 1 to touch the frame
+builders, and the default `media` frame had to stay byte-identical. Adding the
+`track` plumbing changed nothing on the wire for an ordinary call.
+
+### Four findings, one root cause
+
+All four were the same mistake seen from different angles: **the two-track
+interleave was driven by the caller's frame list**, so anything about the
+agent's track that did not line up one-for-one with the caller's was lost.
+
+- **The agent's track restarted from frame 0 on every scenario step.** Pairing
+  by the send loop's own index meant `say` then `wait` forked the agent's
+  opening words, then forked those same words again as the "silence" step. An
+  app under test heard the agent say the same thing twice in one call -- for a
+  transcription consumer, a transcript of something that never happened. A
+  plain `call` has exactly one step, which is why every test passed.
+- **`scenario` accepted every fork flag and honoured none of them.** The flags
+  live on the *shared* option set, but `run_scenario_command` called
+  `config_from` without the agent's frames and skipped the validation that
+  `call` performed -- so it declared an outbound track in its start frame and
+  sent nothing on it for the whole call.
+- **Agent audio longer than the caller's was silently truncated.** A short
+  question and a long answer is the normal shape of a call, not an edge case.
+  The shorter-agent direction was already handled deliberately (no padding,
+  correctly); this was the same decision made wrongly in the other direction.
+- **`frames_sent` undercounted a two-track fork by half.** 150 frames on the
+  wire reported as 100 is a number somebody eventually reconciles against a
+  packet capture and finds wrong. Both totals are now published, because "the
+  caller sent 2.00s of audio" and "150 frames went over the wire" are different
+  questions and one number cannot answer both.
+
+Fixed at the root rather than symptom by symptom: the outbound track now has
+its own cursor on the session and its own drain phase. Three of the four could
+each have been patched where they surfaced -- a cursor here, a padding rule
+there, a counter increment -- and the fourth would still have been waiting.
+
+### Two of my own tests could not detect their own bugs
+
+Mutation testing is the only reason this was noticed, and it is the second gate
+running where it has caught a test that could not fail.
+
+The cursor test called `_next_outbound_frame()` directly, which walks the
+cursor correctly wherever the cursor lives -- so it passed against a mutation
+that reset the cursor inside `_stream_frames`, which *is* the bug. The scenario
+test called `api.run_scenario` with a config that already held the agent's
+frames, so it could not see that the command line never loaded them.
+
+Both were testing the layer beneath the one that was broken. That is the same
+mistake that let `streamdouble scenario` ship unreachable for the life of a
+public release, and the lesson keeps having to be relearned: **a test must
+drive the path that can be wrong, not the helper it calls.** Rewritten to run a
+real multi-step scenario and to invoke the installed entry point in a
+subprocess.
+
+The subprocess was not fastidiousness either. Calling `cli.main` in-process
+between this module's async tests runs `asyncio.run` inside their shared loop
+and turned four unrelated tests red without touching them.
+
+## Phase 9
+
+*2026-09-12.*
+
+### What Phase 9 built
+
+Fork mode (`--fork --track inbound|outbound|both --agent-audio X.wav`), stereo
+recording (`--record-stereo`), and a `/media-stream-fork` endpoint on the
+example agent with `talk_back=` and `mark_back=` misbehaviour modes so the new
+warning has a live demo.
+
+**The golden file passed unregenerated**, which was gate 8's headline risk
+stated in advance: this is the first phase since Phase 1 to touch the frame
+builders, and the default `media` frame had to stay byte-identical. Adding the
+`track` plumbing changed nothing on the wire for an ordinary call.
+
+### What the docs say, and where this tool infers
+
+Verified against the live documentation. Keeping these apart is the whole
+discipline of the phase:
+
+| Claim | Status |
+|---|---|
+| "Twilio sends the `mark` event only during bidirectional Streams" | **Documented, verbatim** |
+| `media.track` is `"inbound"`/`"outbound"`; TwiML uses `both_tracks` | **Documented** |
+| One `chunk`/`timestamp`/`sequenceNumber` sequence across both tracks | **Inference** |
+| An app sending media on a fork is committing a violation | **Inference** |
+
+The two-track counter question is not merely unanswered, it is unmentioned:
+the docs describe `chunk` as incrementing "with each subsequent message" and
+`timestamp` as measured "from the start of the stream", neither of which says
+*track*, and no example shows a two-track stream at all. A single stream-wide
+sequence is the better reading of both sentences and is what the encoder emits,
+labelled as an inference in `protocol.py` so whoever establishes the truth knows
+where to change it.
+
+The violation question is the same shape. The docs state the bidirectional case
+affirmatively -- "you can send WebSocket messages back to Twilio" -- and are
+silent on the other direction. So it is a **warning by default**, and a
+violation only under `--strict-fork`. Failing someone's build on this project's
+reading of a silence in the documentation is not a thing to do unasked.
+
+### Two bugs found by running it, not by testing it
+
+The same pattern as Phase 8, and worth recording because the tests were green
+both times:
+
+- **A correct fork consumer failed.** Silence on a one-way fork is the right
+  answer -- the app has no channel to speak on -- but it was reported as a
+  response timeout, exit 2. Every well-behaved fork consumer in the world would
+  have failed for doing exactly the right thing.
+- **`--strict-fork` did nothing.** The inference was enforced as a violation
+  regardless, which contradicted both the design and this project's own rule
+  about inferences. The flag now decides, and `SessionResult.warnings` exists
+  to carry the non-strict case -- a violation is something the docs say is
+  wrong, a warning is something this tool infers is wrong, and conflating them
+  is how a test tool starts making claims it cannot support.
+
+### A test that passed because of its own litter
+
+Redirecting documented commands' output into `tmp_path` -- so a test run stops
+dropping `call.jsonl` and `baseline.json` in the repository root -- turned the
+README's `--baseline` example red. It had only ever passed because an *earlier*
+documented command left a `baseline.json` behind for it to find.
+
+So the test depended on the mess it made, and cleaning up the mess broke it.
+The `.gitignore` entries that were hiding those files are gone too: a file
+appearing there again is now a real bug, and hiding it would have been the
+wrong fix twice over.
 
 ## Phase 8 and gate 7
 
