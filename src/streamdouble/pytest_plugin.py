@@ -196,6 +196,20 @@ def pytest_runtest_makereport(item: Any, call: Any) -> Any:
 
     if report.when != "call" or not report.failed:
         return
+
+    # Only for tests that actually placed a call. This plugin is installed into
+    # other people's suites by the mere fact of the package being present, and
+    # without this check any unrelated `None < 5` anywhere in their code base
+    # gets a paragraph about Twilio voice agents attached to it.
+    #
+    # Found by installing the wheel into a clean virtualenv and running a
+    # two-line test that had nothing to do with streamdouble. The existing test
+    # for this only checked that ordinary *numeric* failures were left alone,
+    # which they were -- it never occurred to it that a stranger's suite might
+    # compare None to a number for reasons of its own.
+    if not _used_streamdouble(item):
+        return
+
     if call.excinfo is None or not isinstance(call.excinfo.value, TypeError):
         return
     if _NONE_COMPARISON_MARKER not in str(call.excinfo.value):
@@ -204,3 +218,16 @@ def pytest_runtest_makereport(item: Any, call: Any) -> Any:
         return
 
     report.sections.append(("streamdouble", _NONE_COMPARISON_HELP))
+
+
+def _used_streamdouble(item: Any) -> bool:
+    """Whether this test asked for one of our fixtures.
+
+    Requesting `simulated_call` is the signal. A test that placed a call with
+    the plain API rather than the fixture gets no explanation, which is the
+    right way round to be wrong: saying nothing to someone who would have
+    understood the message is better than lecturing someone who has never
+    heard of this package.
+    """
+    names = getattr(item, "fixturenames", ())
+    return "simulated_call" in names or "streamdouble_config" in names

@@ -420,6 +420,12 @@ Three gaps motivate them:
 | **8 — One call becomes a trend** | A latency number stops being a reading and becomes a baseline you can regress against | 0.3.0 |
 | **9 — The other half of the protocol** | The `<Start><Stream>` fork, and both tracks rendered into one listenable file | 0.4.0 |
 
+> **Released as 0.2.0, not 0.4.0.** Decided 2026-09-12. All three phases ship
+> as one release, because they were planned and built as one arc and three
+> separate uploads would have meant two versions nobody had a reason to install.
+> The column below still describes what each phase's *code* is; PyPI just has
+> fewer numbers in it than this table does.
+>
 > **The version column is not a release schedule.** Decided 2026-09-11:
 > **nothing is published to PyPI until Phase 9 is done.** Those numbers say
 > what each phase's code *is* -- 0.2.0 adds an API, 0.4.0 changes bytes on the

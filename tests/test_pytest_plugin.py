@@ -129,6 +129,41 @@ def test_a_normal_failure_is_left_alone(agent_test, pytester):
 # ---------------------------------------------------------------------------
 
 
+def test_an_unrelated_suite_is_not_lectured(pytester):
+    """A stranger's `None < 5` must not get a paragraph about voice agents.
+
+    This plugin loads into every pytest run of anyone who installs the
+    package. Without a check that the test actually placed a call, any
+    unrelated None comparison anywhere in their code base gets an explanation
+    about Twilio, which is how a plugin gets uninstalled.
+
+    Found by installing the built wheel into a clean virtualenv and running a
+    two-line test with nothing to do with streamdouble. The nearby test for
+    this only asserted that ordinary *numeric* failures were left alone -- it
+    never occurred to it that someone might compare None to a number for
+    reasons of their own.
+    """
+    # The ini matters even here: without
+    # asyncio_default_fixture_loop_scope, pytest-asyncio warns during
+    # collection and the inner run produces no summary at all.
+    pytester.makeini(
+        "[pytest]\n"
+        "asyncio_mode = auto\n"
+        "asyncio_default_fixture_loop_scope = function\n"
+    )
+    pytester.makepyfile(
+        "def test_unrelated():\n"
+        "    value = None\n"
+        "    assert value < 800\n"
+    )
+    result = pytester.runpytest("-p", "no:cacheprovider")
+
+    result.assert_outcomes(failed=1)
+    assert "measurement that was never taken" not in result.stdout.str(), (
+        "a suite that never used streamdouble was given streamdouble's advice"
+    )
+
+
 def test_the_config_fixture_is_overridable(agent_test, pytester):
     """A suite's own conftest must be able to carry its agent's auth."""
     agent_test(
