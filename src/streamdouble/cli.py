@@ -4,10 +4,12 @@ The product is the CLI and CI, so this file is a user-facing surface rather than
 a thin wrapper: what it prints, and what it exits with, is most of what anyone
 will ever see of this package.
 
-Phase 2 scope is the ``call`` command. Threshold flags, ``--json``, and the full
-exit-code contract arrive with the metrics layer in Phase 3; the exit codes
-defined here are the subset that is already meaningful, and they keep their
-meanings when the rest are added.
+It does not, however, know how to place a call. That lives in ``api.py``, and
+this module parses arguments, renders a report and picks an exit code. The
+split is deliberate: `streamdouble scenario` parsed correctly and then died
+with "unknown command" for its whole life in a public repository because the
+command line had a code path of its own that no test exercised. One
+implementation, two front ends.
 """
 
 from __future__ import annotations
@@ -18,30 +20,64 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, audio
+from . import __version__, api, audio
+from . import baseline as baseline_module
+from .aggregate import RunSeries
+from .api import (
+    EXIT_ASSERTION_FAILED,
+    EXIT_CONNECTION_FAILED,
+    EXIT_OK,
+    EXIT_PROTOCOL_VIOLATION,
+    EXIT_TIMEOUT,
+    EXIT_USAGE,
+    CallReport,
+    ConnectionFailed,
+)
+from .baseline import BaselineError
 from .chaos import Impairments
 from .metrics import (
     CONVERSATIONAL_FLOW_MS,
+    MIN_SAMPLES_FOR_PERCENTILE,
     Metrics,
     Threshold,
     compute,
-    evaluate_thresholds,
 )
+from .protocol import TRACK_INBOUND, TRACK_OUTBOUND
 from .scenario import ScenarioError
 from .scenario import load as load_scenario
-from .session import Session, SessionConfig, SessionResult
-
-__all__ = ["build_parser", "main"]
+from .session import SessionConfig, SessionResult
+from .trace import TraceConfig
 
 #: Exit codes. Stable, and chosen so CI can distinguish outcomes without
-#: parsing output. Reserved for their Phase 3 meanings from the start, so that
-#: nothing which works today changes meaning later.
-EXIT_OK = 0
-EXIT_ASSERTION_FAILED = 1
-EXIT_TIMEOUT = 2
-EXIT_PROTOCOL_VIOLATION = 3
-EXIT_USAGE = 4
-EXIT_CONNECTION_FAILED = 5
+#: parsing output. They are *defined* in ``api`` and re-exported here, because
+#: they are part of the CLI's documented contract and ``cli.EXIT_TIMEOUT`` is
+#: what existing callers and tests import -- but there must be exactly one
+#: definition, or the API and the command line could disagree about what a run
+#: meant.
+#:
+#: They are named in ``__all__`` so that a linter's unused-import pass sees a
+#: re-export rather than dead code and removes them. That is not hypothetical:
+#: it happened during the refactor that introduced this module, and every
+#: exit-code test went red at once.
+#: Fewest runs before a baseline comparison is allowed.
+#:
+#: Not a style preference. PLAN.md records the reasoning as a phase-8
+#: precondition: a baseline comparison must not ship without repeat runs,
+#: because comparing two single calls compares two samples of a noisy process
+#: and produces false regressions. Three is the floor at which a median means
+#: anything at all; 20 is where the percentile does, which the summary says.
+MIN_RUNS_FOR_COMPARISON = 3
+
+__all__ = [
+    "EXIT_ASSERTION_FAILED",
+    "EXIT_CONNECTION_FAILED",
+    "EXIT_OK",
+    "EXIT_PROTOCOL_VIOLATION",
+    "EXIT_TIMEOUT",
+    "EXIT_USAGE",
+    "build_parser",
+    "main",
+]
 
 
 def _add_shared_options(command: argparse.ArgumentParser) -> None:
@@ -79,8 +115,78 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
     )
     command.add_argument("--quiet", action="store_true", help="print only errors")
     command.add_argument(
+        "--trace", type=Path, metavar="PATH",
+        help=(
+            "write every frame, both directions, as JSON Lines. This is the "
+            "artefact to attach to a bug report about the simulation itself"
+        ),
+    )
+    command.add_argument(
+        "--trace-payloads", action="store_true",
+        help=(
+            "include the base64 audio in the trace. Off by default: a minute "
+            "of audio is about 30 MB of base64 that nobody reads"
+        ),
+    )
+    command.add_argument(
+        "--trace-secrets", action="store_true",
+        help=(
+            "include start.customParameters values in the trace. Off by "
+            "default, because --param is how agents are authenticated and a "
+            "trace exists to be sent to someone else"
+        ),
+    )
+    command.add_argument(
         "--json", action="store_true",
         help="emit metrics as JSON on stdout instead of a human summary",
+    )
+
+    fork = command.add_argument_group(
+        "stream mode",
+        "By default streamdouble simulates <Connect><Stream>, the "
+        "bidirectional call an agent answers. A <Start><Stream> fork is the "
+        "other half of Media Streams: one-way, no channel back, and what "
+        "transcription and compliance-recording apps consume.",
+    )
+    fork.add_argument(
+        "--fork", action="store_true",
+        help=(
+            "simulate a <Start><Stream> fork rather than a bidirectional call. "
+            "No mark echo and no clear, because Twilio sends marks only on "
+            "bidirectional streams"
+        ),
+    )
+    fork.add_argument(
+        "--track", choices=["inbound", "outbound", "both"], default="inbound",
+        help=(
+            "which tracks the fork carries. 'both' needs --agent-audio, since "
+            "on a real fork Twilio supplies the agent's audio too "
+            "(default: %(default)s)"
+        ),
+    )
+    fork.add_argument(
+        "--agent-audio", type=Path, metavar="PATH",
+        help=(
+            "WAV for the outbound track of a fork -- what the agent said. "
+            "Required with --track outbound or both"
+        ),
+    )
+    fork.add_argument(
+        "--strict-fork", action="store_true",
+        help=(
+            "treat an app sending media back on a fork as a protocol "
+            "violation rather than a warning. Off by default because the rule "
+            "is inferred: the Twilio docs state the bidirectional case and are "
+            "silent on this one"
+        ),
+    )
+    fork.add_argument(
+        "--record-stereo", type=Path, metavar="PATH",
+        help=(
+            "write both sides of the call to one WAV, caller left and agent "
+            "right. The agent's channel is placed at the instants its audio "
+            "arrived, so a front-loading agent looks front-loaded"
+        ),
     )
 
     chaos = command.add_argument_group(
@@ -107,6 +213,70 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
     chaos.add_argument(
         "--chaos-seed", type=int, default=0, metavar="N",
         help="seed for the impairment decisions (default: %(default)s)",
+    )
+
+    series = command.add_argument_group(
+        "repeat runs",
+        "One call is a sample, not a measurement. Repeating gives a "
+        "distribution -- and a stored distribution is something a later run "
+        "can be checked against, which an absolute threshold cannot do.",
+    )
+    series.add_argument(
+        "-n", "--repeat", type=int, default=1, metavar="N",
+        help=(
+            "place N calls in sequence and summarise them. Sequential, never "
+            "parallel: concurrent calls delay each other's frames and would "
+            "corrupt the statistics being gathered (default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--save-baseline", type=Path, metavar="PATH",
+        help="write this run's summary to PATH, to compare later runs against",
+    )
+    series.add_argument(
+        "--baseline", type=Path, metavar="PATH",
+        help=(
+            "compare this run against a saved baseline and fail on a "
+            "regression. Catches 300ms becoming 700ms, which no absolute "
+            "threshold can see"
+        ),
+    )
+    series.add_argument(
+        "--tolerance-pct", type=float, default=baseline_module.DEFAULT_TOLERANCE_PCT,
+        metavar="PCT",
+        help=(
+            "how much worse, proportionally, counts as a regression "
+            "(default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--tolerance-ms", type=float, default=baseline_module.DEFAULT_TOLERANCE_MS,
+        metavar="MS",
+        help=(
+            "how much worse, absolutely, counts as a regression for metrics "
+            "measured in milliseconds. A change must exceed this AND "
+            "--tolerance-pct, so a 40%% worse 5ms figure is not a build "
+            "failure (default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--tolerance-ratio", type=float, default=baseline_module.DEFAULT_TOLERANCE_RATIO,
+        metavar="N",
+        help=(
+            "the same absolute bar for metrics that are ratios rather than "
+            "durations, currently just delivery ratio. Separate because 50 "
+            "means something entirely different for a duration in "
+            "milliseconds than for a ratio that runs from about 1 to 12 "
+            "(default: %(default)s)"
+        ),
+    )
+    series.add_argument(
+        "--allow-unmeasured-baseline", action="store_true",
+        help=(
+            "save a baseline even when the run measured nothing. Off by "
+            "default: such a baseline makes every later comparison "
+            "incomparable, which silently disables the regression check"
+        ),
     )
 
     gates = command.add_argument_group(
@@ -224,7 +394,84 @@ def thresholds_from(args: argparse.Namespace) -> list[Threshold]:
     return thresholds
 
 
-def config_from(args: argparse.Namespace, params: dict[str, str]) -> SessionConfig:
+def trace_from(args: argparse.Namespace) -> TraceConfig | None:
+    """Build the trace configuration, or None when --trace was not given."""
+    if not args.trace:
+        return None
+    return TraceConfig(
+        path=args.trace,
+        payloads=args.trace_payloads,
+        secrets=args.trace_secrets,
+    )
+
+
+def impairments_from(args: argparse.Namespace) -> Impairments:
+    """The network conditions this run asked for."""
+    return Impairments(
+        loss=args.packet_loss,
+        jitter_ms=args.jitter,
+        latency_ms=args.latency,
+    )
+
+
+class UsageError(Exception):
+    """The command line asks for something that cannot be done."""
+
+
+def agent_frames_from(args: argparse.Namespace) -> list[bytes]:
+    """Load and validate the outbound track of a fork.
+
+    Shared by both subcommands rather than living in ``call``. The fork flags
+    are on the *shared* option set, so ``scenario`` accepted every one of them
+    and then silently ignored ``--agent-audio`` -- declaring an outbound track
+    in its start frame and sending nothing on it for the whole call. Gate 8
+    found that; the fix is for there to be one place this is done.
+
+    Raises:
+        UsageError: The combination cannot be honoured.
+    """
+    needs_outbound = args.fork and TRACK_OUTBOUND in tracks_from(args)
+    if needs_outbound and not args.agent_audio:
+        # Refused rather than filled with silence. On a real fork Twilio copies
+        # the agent's own audio to the app, so a fork carrying an outbound
+        # track of silence is not a simpler simulation -- it is a wrong one,
+        # and the app under test would conclude the agent never spoke.
+        raise UsageError(
+            f"--track {args.track} needs --agent-audio: on a fork Twilio "
+            "supplies the agent's audio too, and streamdouble is standing in "
+            "for Twilio"
+        )
+
+    if args.agent_audio and not args.fork:
+        raise UsageError(
+            "--agent-audio only means something with --fork; a bidirectional "
+            "call gets the agent's audio from the agent"
+        )
+
+    if not args.agent_audio:
+        return []
+
+    try:
+        frames = audio.wav_to_ulaw_frames(args.agent_audio)
+    except audio.AudioError as exc:
+        raise UsageError(str(exc)) from exc
+    if not frames:
+        raise UsageError(f"{args.agent_audio} contains no audio")
+    return frames
+
+
+def tracks_from(args: argparse.Namespace) -> list[str]:
+    """Which tracks a fork carries, in the WebSocket spelling."""
+    if args.track == "both":
+        return [TRACK_INBOUND, TRACK_OUTBOUND]
+    return [args.track]
+
+
+def config_from(
+    args: argparse.Namespace,
+    params: dict[str, str],
+    agent_frames: list[bytes] | None = None,
+) -> SessionConfig:
     """Build a SessionConfig from parsed arguments."""
     return SessionConfig(
         response_timeout_s=args.response_timeout,
@@ -232,12 +479,12 @@ def config_from(args: argparse.Namespace, params: dict[str, str]) -> SessionConf
         max_drain_s=args.max_drain,
         echo_marks=not args.no_echo_marks,
         custom_parameters=params,
-        impairments=Impairments(
-            loss=args.packet_loss,
-            jitter_ms=args.jitter,
-            latency_ms=args.latency,
-        ),
+        impairments=impairments_from(args),
         chaos_seed=args.chaos_seed,
+        fork=args.fork,
+        tracks=tracks_from(args),
+        agent_frames=list(agent_frames or []),
+        strict_fork=args.strict_fork,
     )
 
 
@@ -341,6 +588,11 @@ def report(
         for outcome in outcomes:
             write(f"  {outcome.describe()}")
 
+    if result.warnings:
+        write()
+        for note in result.warnings:
+            write(f"  ! {note}")
+
     if metrics.violations:
         write()
         write(f"  {len(metrics.violations)} protocol violation(s):")
@@ -355,79 +607,140 @@ def report(
         write("  the agent closed the connection before the call finished")
 
 
+def report_series(series: RunSeries, write=print) -> None:
+    """Print a summary of several runs."""
+    write()
+    write(f"  {series.n} run{'' if series.n == 1 else 's'}, {series.failures} failed")
+    write()
+    write(f"  {'':<16}{'median':>10}{'min':>10}{'max':>10}{'p95':>10}{'stddev':>9}  n")
+    for metric in series.metrics:
+        measured = len(metric.measured)
+        counts = f"{measured}/{metric.n}"
+        write(
+            f"  {metric.label:<16}"
+            f"{_cell(metric.median):>10}{_cell(metric.minimum):>10}"
+            f"{_cell(metric.maximum):>10}{_cell(metric.p95):>10}"
+            f"{_cell(metric.stddev):>9}  {counts}"
+        )
+
+    if series.percentiles_withheld:
+        write()
+        write(
+            f"  p95 withheld: {series.n} runs is below the {MIN_SAMPLES_FOR_PERCENTILE} "
+            "needed for a percentile to mean anything"
+        )
+
+    missing = [m for m in series.metrics if m.missing]
+    if missing:
+        write()
+        for metric in missing:
+            write(
+                f"  {metric.label}: {metric.missing} of {metric.n} runs produced no "
+                "measurement, and are excluded from the figures above rather "
+                "than counted as zero"
+            )
+
+
+def report_comparison(comparison, write=print) -> None:
+    """Print a baseline comparison."""
+    write()
+    write("  against the baseline:")
+    for delta in comparison.deltas:
+        if delta.lost_measurement:
+            write(
+                f"    {delta.label:<16} was {delta.before:.1f}, now never measured  "
+                "REGRESSION"
+            )
+        elif not delta.comparable:
+            write(f"    {delta.label:<16} not comparable")
+        else:
+            arrow = "+" if (delta.delta or 0) >= 0 else ""
+            verdict = "  REGRESSION" if delta.regressed else ""
+            write(
+                f"    {delta.label:<16} {delta.before:.1f} -> {delta.after:.1f} "
+                f"({arrow}{delta.delta:.1f}, {arrow}{delta.delta_pct:.0f}%){verdict}"
+            )
+
+
+def _cell(value: float | None) -> str:
+    """A missing figure renders as a dash, never as 0.
+
+    The whole project turns on that distinction, and a table is where it is
+    easiest to lose: a blank or a zero in a column of numbers reads as a
+    measurement.
+    """
+    return "-" if value is None else f"{value:.1f}"
+
+
 def exit_code_for(result: SessionResult, outcomes: list | None = None) -> int:
     """Map a call outcome to an exit code.
 
-    Ordered by severity, most definite first. A protocol violation is a certain
-    bug; a timeout is a specific, informative outcome; a failed threshold is a
-    judgement about a number that was measured successfully. Reporting the
-    vaguest of the three when a more specific one applies would lose
-    information a pipeline could have acted on.
+    Kept as a function because tests and downstream code import it. The logic
+    itself is :attr:`streamdouble.api.CallReport.exit_code` -- this builds the
+    smallest report that can answer the question rather than reimplementing it,
+    so the two can never disagree.
     """
-    if result.violations:
-        return EXIT_PROTOCOL_VIOLATION
-    if result.timed_out:
-        return EXIT_TIMEOUT
-    if result.failed_expectations:
-        return EXIT_ASSERTION_FAILED
-    if any(not outcome.passed for outcome in outcomes or []):
-        return EXIT_ASSERTION_FAILED
-    return EXIT_OK
+    return CallReport(result=result, metrics=compute(result), thresholds=outcomes or []).exit_code
 
 
-async def place_call(args: argparse.Namespace, session: Session, banner: str) -> int:
-    """Run a prepared session and report it. Shared by `call` and `scenario`."""
-    if not args.quiet and not args.json:
-        print(banner)
+def _caller_audio(args: argparse.Namespace) -> bytes:
+    """The caller's side of the call, as mu-law, for the stereo recording.
 
+    Re-read from the source WAV rather than captured during the call. What went
+    out is a deterministic function of the file, and keeping a second copy of
+    it on the session would add memory to the hot path for something only a
+    recording wants.
+    """
+    if not getattr(args, "audio", None):
+        return b""
     try:
-        result = await session.run()
-    except (OSError, TimeoutError) as exc:
-        # Covers a refused connection, an unresolvable host, and a handshake
-        # that never completed -- from the user's point of view one situation:
-        # the agent is not reachable at that URL.
-        print(f"streamdouble: could not connect to {args.url}: {exc}", file=sys.stderr)
-        return EXIT_CONNECTION_FAILED
+        return b"".join(audio.wav_to_ulaw_frames(args.audio))
+    except audio.AudioError:
+        return b""
 
-    metrics = compute(result)
-    outcomes = evaluate_thresholds(metrics, thresholds_from(args))
 
-    if args.out:
-        if not result.audio_received:
-            print(
-                f"streamdouble: no audio received, so {args.out} was not written",
-                file=sys.stderr,
-            )
-        else:
-            audio.ulaw_to_wav(result.audio_received, args.out)
+def render(args: argparse.Namespace, call_report: CallReport) -> int:
+    """Render a finished call and return its exit code.
+
+    Everything this function does is presentation. It computes nothing about
+    the call -- the numbers, the threshold outcomes and the exit code all
+    arrive already decided on the report -- so the CLI cannot report something
+    the API would not.
+    """
+    result = call_report.result
+
+    if args.out and not api.save_reply(call_report, args.out):
+        # An agent that never spoke leaves no file at all, rather than a
+        # zero-length WAV that looks like a successful recording of silence.
+        print(
+            f"streamdouble: no audio received, so {args.out} was not written",
+            file=sys.stderr,
+        )
+
+    if args.record_stereo and not api.save_stereo(
+        call_report, _caller_audio(args), args.record_stereo
+    ):
+        print(
+            f"streamdouble: no audio received, so {args.record_stereo} was "
+            "not written",
+            file=sys.stderr,
+        )
 
     if args.json:
         # JSON goes to stdout alone, so a pipeline can consume it directly
         # without having to strip a human preamble. Everything else this
         # command says in --json mode goes to stderr.
-        payload = metrics.to_dict()
-        payload["stream_sid"] = result.identity.stream_sid
-        payload["frames_dropped"] = result.frames_dropped
-        payload["expectations"] = [
-            {"what": what, "passed": passed} for what, passed in result.expectations
-        ]
-        payload["thresholds"] = [
-            {
-                "name": outcome.threshold.name,
-                "limit_ms": outcome.threshold.limit,
-                "value_ms": None if outcome.value is None else round(outcome.value, 1),
-                "passed": outcome.passed,
-            }
-            for outcome in outcomes
-        ]
-        payload["exit_code"] = exit_code_for(result, outcomes)
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(call_report.to_dict(), indent=2))
     elif not args.quiet:
-        report(result, metrics, outcomes)
+        report(result, call_report.metrics, call_report.thresholds)
         if args.out and result.audio_received:
             print(f"\nwrote {args.out} ({result.audio_duration_s:.2f}s)")
+        if call_report.trace_path:
+            print(f"wrote {call_report.trace_path} (frame trace)")
+        if args.record_stereo and call_report.result.audio_received:
+            print(f"wrote {args.record_stereo} (stereo: caller left, agent right)")
 
-    return exit_code_for(result, outcomes)
+    return call_report.exit_code
 
 
 async def run_call_command(args: argparse.Namespace) -> int:
@@ -447,12 +760,177 @@ async def run_call_command(args: argparse.Namespace) -> int:
         print(f"streamdouble: {args.audio} contains no audio", file=sys.stderr)
         return EXIT_USAGE
 
-    session = Session(args.url, frames, config=config_from(args, params))
-    banner = (
-        f"calling {args.url} with {len(frames)} frames "
-        f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio)"
+    try:
+        agent_frames = agent_frames_from(args)
+    except UsageError as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if args.repeat < 1:
+        print("streamdouble: --repeat must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+
+    if args.baseline and args.repeat < MIN_RUNS_FOR_COMPARISON:
+        # Comparing single calls compares two samples of a noisy process.
+        # Two calls over a real socket differ by tens of milliseconds for
+        # reasons that have nothing to do with the agent -- this project's own
+        # trace parity test passed alone and failed in sequence until it was
+        # changed to medians. A regression check that fires on that noise gets
+        # `continue-on-error` added to it, after which it never fires again,
+        # and a gate nobody trusts is worse than no gate.
+        print(
+            f"streamdouble: --baseline needs at least --repeat "
+            f"{MIN_RUNS_FOR_COMPARISON}; comparing {args.repeat} call(s) against "
+            "a baseline compares samples of a noisy process and will report "
+            "regressions that are not real. 20 runs is where the percentile "
+            "becomes meaningful too.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    if not args.quiet and not args.json:
+        suffix = f" x{args.repeat}" if args.repeat > 1 else ""
+        print(
+            f"calling {args.url} with {len(frames)} frames "
+            f"({len(frames) * audio.FRAME_MS / 1000:.2f}s of audio){suffix}"
+        )
+
+    config = config_from(args, params, agent_frames)
+    try:
+        if args.repeat > 1 or args.save_baseline or args.baseline:
+            return await run_series(args, frames, config)
+
+        call_report = await api.call(
+            args.url,
+            frames=frames,
+            config=config,
+            thresholds=thresholds_from(args),
+            trace=trace_from(args),
+        )
+    except ConnectionFailed as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_CONNECTION_FAILED
+    except BaselineError as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    return render(args, call_report)
+
+
+async def run_series(args: argparse.Namespace, frames: list[bytes], config) -> int:
+    """Place several calls, summarise them, and compare against a baseline.
+
+    A regression exits 1 -- the existing assertion-failed code -- rather than a
+    new sixth one. The exit-code contract is documented and stable, and a
+    regression is an assertion about a number that turned out false, which is
+    exactly what 1 already means.
+    """
+    fingerprint = baseline_module.fingerprint(
+        audio_path=args.audio if getattr(args, "audio", None) else None,
+        frames=len(frames),
+        chaos_seed=args.chaos_seed,
+        impairments=impairments_from(args).describe(),
     )
-    return await place_call(args, session, banner)
+
+    # Load and check the baseline *before* placing a single call. Everything
+    # comparability depends on -- the clip's hash, the seed, the impairments --
+    # is known now, so discovering a mismatch afterwards means having spent
+    # twenty real calls to learn something that was true before the first one.
+    #
+    # The same principle the scenario loader already follows: validated before
+    # the socket opens, so a typo cannot fail halfway through with the agent
+    # mid-sentence.
+    stored = None
+    if args.baseline:
+        stored = baseline_module.load(args.baseline)
+        baseline_module.check_comparable(stored, RunSeries(metrics=(), fingerprint=fingerprint))
+
+    def progress(index: int, report) -> None:
+        if args.quiet or args.json or args.repeat < 2:
+            return
+        figure = report.time_to_first_audio_ms
+        rendered = "no audio" if figure is None else f"{figure:.0f} ms"
+        print(f"  run {index + 1}/{args.repeat}: {rendered}")
+
+    series, reports = await api.call_series(
+        args.url,
+        runs=args.repeat,
+        fingerprint=fingerprint,
+        on_run=progress,
+        frames=frames,
+        config=config,
+        thresholds=thresholds_from(args),
+        trace=trace_from(args),
+    )
+    payloads = [report.to_dict() for report in reports]
+
+    comparison = None
+    if stored is not None:
+        comparison = baseline_module.compare(
+            stored,
+            series,
+            tolerance_pct=args.tolerance_pct,
+            tolerance_ms=args.tolerance_ms,
+            tolerance_ratio=args.tolerance_ratio,
+        )
+
+    if args.save_baseline:
+        unmeasured = [m for m in series.metrics if m.median is None]
+        if unmeasured and not args.allow_unmeasured_baseline:
+            # A baseline in which nothing was measured is worse than no
+            # baseline. Every later comparison against it reads "not
+            # comparable" and never regresses, so the gate silently stops
+            # checking -- and it looks healthy, because "not comparable" is the
+            # correct response to missing data. The realistic path is a
+            # scheduled baseline refresh running on a day the agent is down.
+            print(
+                f"streamdouble: not writing {args.save_baseline}: this run "
+                f"measured nothing for {len(unmeasured)} of "
+                f"{len(series.metrics)} metrics, and a baseline like that makes "
+                "every later comparison incomparable -- which disables the "
+                "regression check without failing. Fix the run first, or pass "
+                "--allow-unmeasured-baseline if you meant it.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        baseline_module.save(args.save_baseline, series, payloads)
+
+    if args.json:
+        payload = {
+            "series": series.to_dict(),
+            "runs": payloads,
+        }
+        if comparison is not None:
+            payload["comparison"] = comparison.to_dict()
+        payload["exit_code"] = _series_exit_code(reports, comparison)
+        print(json.dumps(payload, indent=2))
+    elif not args.quiet:
+        report_series(series)
+        if comparison is not None:
+            report_comparison(comparison)
+        if args.save_baseline:
+            print()
+            print(f"wrote {args.save_baseline} (baseline)")
+
+    return _series_exit_code(reports, comparison)
+
+
+def _series_exit_code(reports: list, comparison) -> int:
+    """The worst outcome across the series wins.
+
+    A regression is EXIT_ASSERTION_FAILED, the same as a failed threshold,
+    because it is the same kind of fact: a number was measured and found
+    wanting. A more definite outcome in any single run -- a protocol violation,
+    a timeout -- outranks it, on the same severity ordering one call uses.
+    """
+    for code in (EXIT_PROTOCOL_VIOLATION, EXIT_TIMEOUT):
+        if any(report.exit_code == code for report in reports):
+            return code
+    if comparison is not None and not comparison.passed:
+        return EXIT_ASSERTION_FAILED
+    if any(report.exit_code != EXIT_OK for report in reports):
+        return EXIT_ASSERTION_FAILED
+    return EXIT_OK
 
 
 async def run_scenario_command(args: argparse.Namespace) -> int:
@@ -470,8 +948,28 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
         print(f"streamdouble: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    session = Session(args.url, scenario=script, config=config_from(args, params))
-    return await place_call(args, session, script.describe())
+    try:
+        agent_frames = agent_frames_from(args)
+    except UsageError as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if not args.quiet and not args.json:
+        print(script.describe())
+
+    try:
+        call_report = await api.run_scenario(
+            args.url,
+            script,
+            config=config_from(args, params, agent_frames),
+            thresholds=thresholds_from(args),
+            trace=trace_from(args),
+        )
+    except ConnectionFailed as exc:
+        print(f"streamdouble: {exc}", file=sys.stderr)
+        return EXIT_CONNECTION_FAILED
+
+    return render(args, call_report)
 
 
 #: Subcommand name to the coroutine that runs it.

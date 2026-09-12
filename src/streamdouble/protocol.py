@@ -21,6 +21,37 @@ rediscovered:
 * The ``connected`` frame carries neither ``streamSid`` nor ``sequenceNumber``.
 * ``media.timestamp`` is "Presentation Timestamp in Milliseconds from the start
   of the stream" -- stream time, not wall-clock time, and not a per-frame delta.
+* **The TwiML attribute and the WebSocket field use different literals for the
+  same idea.** TwiML ``<Stream track="...">`` takes ``inbound_track``,
+  ``outbound_track`` or ``both_tracks``; the WebSocket ``media.track`` field is
+  ``"inbound"`` or ``"outbound"``, and ``start.tracks`` is an array of those.
+  The same trap as ``dtmf.track``, and it will be tempting to normalise them.
+* **``mark`` exists only on bidirectional streams.** Verbatim: "Twilio sends
+  the ``mark`` event only during bidirectional Streams." A ``<Start><Stream>``
+  fork therefore has no mark echo and no ``clear`` -- which is a design pivot
+  rather than a detail, because the mark echo is what agents gate turn-taking
+  on and a fork gives them none.
+
+Where the documentation stops, and what this module infers past it:
+
+* **The docs do not say whether a two-track fork shares one counter.** They
+  describe ``chunk`` as beginning at 1 and incrementing "with each subsequent
+  message" -- not each subsequent message *on this track* -- and ``timestamp``
+  as measured "from the start of the stream", not of the track. Neither
+  sentence mentions the two-track case at all, and no example shows it. A
+  single stream-wide sequence is the better reading of both, and it is what
+  :class:`MediaStreamEncoder` emits, but it is an inference and is labelled as
+  one here so that whoever establishes the truth knows exactly what to change.
+* **The docs do not say that an app sending media on a unidirectional stream is
+  committing a violation.** They state the bidirectional case affirmatively --
+  "If you initiated a Stream using ``<Connect><Stream>``... you can send
+  WebSocket messages back to Twilio" -- and say nothing about the other
+  direction. Treating outbound media on a fork as a violation is the useful
+  behaviour, since a simulator that quietly accepts it hides the bug it exists
+  to find, but it is inferred rather than documented. It is therefore a warning
+  by default and a violation only under strict mode.
+
+All of this was verified against the live documentation on 2026-09-11.
 """
 
 from __future__ import annotations
@@ -35,10 +66,13 @@ from typing import Any
 from .audio import FRAME_BYTES, FRAME_MS
 
 __all__ = [
+    "BIDIRECTIONAL_TRACKS",
     "DTMF_TRACK",
     "MEDIA_FORMAT",
     "PROTOCOL_NAME",
     "PROTOCOL_VERSION",
+    "TRACK_INBOUND",
+    "TRACK_OUTBOUND",
     "FrameSequenceError",
     "InboundClear",
     "InboundMark",
@@ -69,6 +103,19 @@ MEDIA_FORMAT = {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1}
 
 #: ``dtmf.track``. Deliberately not "inbound" -- see the module docstring.
 DTMF_TRACK = "inbound_track"
+
+#: ``media.track`` / ``start.tracks`` values. The WebSocket spelling, *not* the
+#: TwiML one -- ``<Stream track="both_tracks">`` on the TwiML side produces
+#: ``["inbound", "outbound"]`` here. Keeping both spellings as named constants
+#: rather than bare strings is the cheapest defence against normalising them,
+#: which is the mistake the module docstring warns about.
+TRACK_INBOUND = "inbound"
+TRACK_OUTBOUND = "outbound"
+
+#: What a ``<Connect><Stream>`` sends: the caller's audio only. The docs are
+#: explicit that a bidirectional stream carries only the inbound track, so this
+#: stays the default and changing it would make the common case unfaithful.
+BIDIRECTIONAL_TRACKS = [TRACK_INBOUND]
 
 #: How much of an offending frame to retain on a violation, so that error
 #: messages stay useful without pulling a multi-megabyte payload into a report.
@@ -240,6 +287,15 @@ class MediaStreamEncoder:
     ``sequenceNumber`` increments across every frame sent to the app.
     ``chunk`` increments only across ``media`` frames, and ``timestamp`` is
     stream time in milliseconds derived from the chunk index -- 20 ms per frame.
+
+    **One counter for both tracks, and that is an inference.** On a two-track
+    fork the documentation does not say whether ``chunk``, ``timestamp`` and
+    ``sequenceNumber`` are shared or kept per track; it describes ``chunk`` as
+    incrementing "with each subsequent message" and ``timestamp`` as measured
+    "from the start of the stream", neither of which mentions tracks, and no
+    example shows the two-track case at all. A single stream-wide sequence is
+    the better reading of both sentences and is what this emits. If that turns
+    out to be wrong, this is the place to change it.
 
     Deriving the timestamp from the chunk index rather than from a clock is
     deliberate: ``media.timestamp`` is *presentation* time, so it must advance at
@@ -416,6 +472,20 @@ class InboundMedia:
 
     stream_sid: str
     payload: bytes
+    #: The frame exactly as it arrived, after JSON decoding.
+    #:
+    #: Carried so that a caller wanting the whole frame -- the trace does --
+    #: does not have to parse the message a second time. Gate 6 found exactly
+    #: that duplication costing a JSON decode per inbound frame inside the
+    #: receive loop, and real agents batch audio into ~8000-byte frames.
+    #:
+    #: Defaults to an empty dict so that existing constructions and the many
+    #: tests building these directly keep working unchanged, and is excluded
+    #: from equality and repr: two media frames carrying the same payload for
+    #: the same stream are the same frame, whatever dict they came out of.
+    #: Without `compare=False` every existing test that asserts on a whole
+    #: parsed frame breaks -- which is how this was found.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -424,6 +494,8 @@ class InboundMark:
 
     stream_sid: str
     name: str
+    #: The frame as it arrived. See :attr:`InboundMedia.raw`.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -431,6 +503,8 @@ class InboundClear:
     """A request to discard buffered audio -- the caller interrupted."""
 
     stream_sid: str
+    #: The frame as it arrived. See :attr:`InboundMedia.raw`.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -449,8 +523,34 @@ class UnknownFrame:
 ParsedFrame = InboundMedia | InboundMark | InboundClear | UnknownFrame
 
 
+def _is_unidirectional_violation(event: str) -> bool:
+    """Whether ``event`` is something only a bidirectional app may send.
+
+    **This is an inference, not a documented rule**, and it is written down as
+    one for the same reason ``chaos.py`` writes down its packet-loss model:
+    somebody will eventually establish the truth, and they should be able to
+    find exactly what to change.
+
+    What the documentation says, affirmatively, is that ``<Connect><Stream>``
+    is bidirectional and "you can send WebSocket messages back to Twilio". It
+    says nothing at all about what happens when an app sends media on a
+    ``<Start><Stream>`` fork. It does say, separately and verbatim, that
+    "Twilio sends the ``mark`` event only during bidirectional Streams", which
+    is a statement about Twilio's behaviour rather than the app's.
+
+    Treating these as violations is the useful reading: a simulator that
+    quietly accepts outbound audio on a fork hides precisely the bug it exists
+    to find. But it is a reading, which is why it is a warning by default and a
+    violation only when the caller asks for strictness.
+    """
+    return event in {"media", "mark", "clear"}
+
+
 def parse_outbound(
-    message: str | bytes, *, expected_stream_sid: str | None = None
+    message: str | bytes,
+    *,
+    expected_stream_sid: str | None = None,
+    unidirectional: bool = False,
 ) -> ParsedFrame:
     """Parse one frame sent by the app.
 
@@ -459,6 +559,12 @@ def parse_outbound(
         expected_stream_sid: If given, frames carrying a different streamSid are
             rejected. Twilio would silently ignore them; surfacing it is more
             useful in a test tool, since it is nearly always an agent bug.
+        unidirectional: The stream is a ``<Start><Stream>`` fork, on which the
+            app has no channel back to Twilio. Frames it cannot legitimately
+            send are then reported as ``unidirectional_stream`` violations.
+            See :func:`_is_unidirectional_violation` -- this is an inference
+            rather than a documented rule, and the caller decides what it is
+            worth.
 
     Raises:
         ProtocolViolation: The frame is not usable as a Twilio outbound frame.
@@ -494,6 +600,20 @@ def parse_outbound(
             "missing_event", "frame has no string 'event' field", raw=excerpt
         )
 
+    if unidirectional and _is_unidirectional_violation(event):
+        # Raised before the frame is otherwise validated, because on a fork the
+        # objection is to the frame existing at all -- complaining that its
+        # streamSid is malformed would be answering the wrong question.
+        raise ProtocolViolation(
+            "unidirectional_stream",
+            f"the app sent a '{event}' frame on a <Start><Stream> fork. A fork "
+            "is one-way: Twilio streams audio to the app and the app has no "
+            "channel back, so this frame would go nowhere on a real call. "
+            "(streamdouble infers this; the Twilio docs state the "
+            "bidirectional case affirmatively and are silent on this one.)",
+            raw=excerpt,
+        )
+
     stream_sid = data.get("streamSid")
     if event in {"media", "mark", "clear"}:
         if not isinstance(stream_sid, str) or not stream_sid:
@@ -511,7 +631,9 @@ def parse_outbound(
             )
 
     if event == "media":
-        return InboundMedia(stream_sid=stream_sid, payload=_decode_payload(data, excerpt))
+        return InboundMedia(
+            stream_sid=stream_sid, payload=_decode_payload(data, excerpt), raw=data
+        )
     if event == "mark":
         mark = data.get("mark")
         name = mark.get("name") if isinstance(mark, dict) else None
@@ -519,9 +641,9 @@ def parse_outbound(
             raise ProtocolViolation(
                 "malformed_mark", "'mark' frame is missing mark.name", raw=excerpt
             )
-        return InboundMark(stream_sid=stream_sid, name=name)
+        return InboundMark(stream_sid=stream_sid, name=name, raw=data)
     if event == "clear":
-        return InboundClear(stream_sid=stream_sid)
+        return InboundClear(stream_sid=stream_sid, raw=data)
 
     return UnknownFrame(event=event, raw=data)
 

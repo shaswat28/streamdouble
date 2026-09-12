@@ -39,7 +39,14 @@ from typing import Any
 from . import audio
 from .session import SessionResult
 
-__all__ = ["Metrics", "Threshold", "ThresholdResult", "compute", "evaluate_thresholds"]
+__all__ = [
+    "SCHEMA_VERSION",
+    "Metrics",
+    "Threshold",
+    "ThresholdResult",
+    "compute",
+    "evaluate_thresholds",
+]
 
 #: The widely cited threshold for conversational flow: a reply that begins
 #: within about 800 ms feels like a conversation rather than a wait.
@@ -66,6 +73,19 @@ CONVERSATIONAL_FLOW_MS = 800
 #: Fewest samples before a percentile is worth reporting. Below this, the
 #: "P95" of a handful of values is just the maximum wearing a statistical hat.
 MIN_SAMPLES_FOR_PERCENTILE = 20
+
+#: Version of the ``--json`` payload's shape.
+#:
+#: Shipped before anything consumes it, deliberately. Phase 8 stores a run as a
+#: baseline and compares a later run against it, and the comparison has to know
+#: whether the two describe the same thing. Adding this field *after* baselines
+#: exist in the wild is the release where you discover that the files you need
+#: to interpret are the ones that do not say what they are.
+#:
+#: Bump it when a field changes meaning or disappears. Adding a field is not a
+#: bump: a reader that ignores unknown keys is unaffected, and treating every
+#: addition as breaking trains people to ignore the number.
+SCHEMA_VERSION = 1
 
 
 def percentile(values: list[float], fraction: float) -> float | None:
@@ -198,6 +218,7 @@ class Metrics:
         Its summary statistics are here instead.
         """
         return {
+            "schema_version": SCHEMA_VERSION,
             "time_to_first_audio_ms": _round(self.time_to_first_audio_ms),
             "frames_sent": self.frames_sent,
             "media_frames_received": self.media_frames_received,

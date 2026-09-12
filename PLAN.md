@@ -3,10 +3,13 @@
 > A framework-agnostic Twilio Media Streams simulator. Test your voice agent's
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-**Status:** All six phases complete, gates 1-4 passed. Public and published on
-PyPI. Gate 5's clean-install half is done -- the package was installed from
-PyPI into an empty virtualenv and exercised; what is still owed is someone who
-is not the author reading the README cold.
+**Status:** All nine phases complete, gates 1-8 passed. Public on GitHub.
+PyPI is deliberately still at 0.1.0 -- nothing publishes until the roadmap is
+done, and it now is, so a release is the next decision rather than the next
+task. Gate 5's clean-install half is done; what is still owed there is a human
+who is not the author reading the README cold.
+See the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap) for
+phases 7-9.
 **License:** Apache-2.0
 **Language:** Python 3.11+
 **Name:** `streamdouble` — `dialtone` was taken on PyPI. See [Progress](#progress).
@@ -180,8 +183,8 @@ matches the documented shape field-for-field.
 >
 > Ran, 5 findings, all fixed with regression tests in
 > `tests/test_review_gate_1.py`. See [Progress](#progress).
-> **Still owed: the by-ear check.** Round-tripped WAVs were produced and
-> handed over, but nobody has confirmed they sound right.
+> **The by-ear check is now done** (2026-09-11) -- see
+> [The by-ear check](#the-by-ear-check-done-2026-09-11).
 >
 > <details><summary>Original gate text</summary>
 >
@@ -395,6 +398,220 @@ That is the proof the tool has value beyond the happy path.
 
 ---
 
+## 3b. Phases 7-9 — the post-launch roadmap
+
+*Planned 2026-09-10, after 0.1.1. Phases 1-6 built a tool that works; these
+three address the reason someone would keep using it after the first call.*
+
+Three gaps motivate them:
+
+1. **It is a command, not a dependency.** Every CI user shells out and parses
+   JSON. Voice developers test in pytest, and streamdouble does not live there.
+2. **A latency number is a reading, not a baseline.** An absolute
+   `--max-first-audio-ms 800` gate cannot see 300 ms become 700 ms. That is the
+   regression teams actually care about and the one the tool is blind to.
+3. **It simulates half the protocol.** Only `<Connect><Stream>`. The
+   `<Start><Stream>` fork -- what transcription and compliance-recording apps
+   consume -- is unmodelled.
+
+| Phase | Thesis | Version |
+|---|---|---|
+| **7 — Become a dependency** | streamdouble stops being a command you shell out to and becomes something you `import` | 0.2.0 |
+| **8 — One call becomes a trend** | A latency number stops being a reading and becomes a baseline you can regress against | 0.3.0 |
+| **9 — The other half of the protocol** | The `<Start><Stream>` fork, and both tracks rendered into one listenable file | 0.4.0 |
+
+> **The version column is not a release schedule.** Decided 2026-09-11:
+> **nothing is published to PyPI until Phase 9 is done.** Those numbers say
+> what each phase's code *is* -- 0.2.0 adds an API, 0.4.0 changes bytes on the
+> wire -- not that each one ships on completion. PyPI stays at 0.1.0 until the
+> roadmap is finished, and the next upload is whatever version is current then.
+> Version numbers on PyPI need not be contiguous, and a jump from 0.1.0 is
+> normal and fine.
+>
+> This is worth stating because the table by itself reads as a release
+> schedule, and a later session that bumps the version at the end of Phase 7
+> and reaches for `release.yml` would be following the plan as written. It
+> would also be irreversible: PyPI never allows a version number to be reused.
+
+**Sequencing.** Phase 7 is the multiplier -- every later feature is worth more
+with users. Phase 8 is strictly downstream of it: comparing baselines means
+comparing a *structured result*, which is what Phase 7 promotes from an
+implementation detail of `cli.py` into a versioned object. Phase 9 is last
+because it is the only one with a hard external dependency -- a foreign
+`<Start><Stream>` consumer to validate against -- and because it can use Phase
+7's trace and Phase 8's repeat harness as instruments rather than growing its
+own.
+
+**The non-goals still hold.** Nothing here scores a transcript, simulates a
+turn, or draws a dashboard. One guard worth writing down: once the pytest
+plugin exists, the obvious next request is `assert_transcript_contains(...)`.
+That is LLM-as-judge with extra steps, and it is the first non-goal on the list.
+
+### Phase 7 — Become a dependency (0.2.0)
+
+- `api.py`: `CallReport`, `async call()`, `async run_scenario()`, sync wrappers
+  that refuse to run inside a live loop with a sentence naming the async form.
+- `cli.py` refactored to *call* `api` rather than duplicate it. `place_call`
+  currently interleaves running, computing, WAV writing, JSON rendering and
+  exit coding. Two code paths for "place a call" are two paths that drift --
+  which is exactly how `streamdouble scenario` shipped unreachable.
+- `pytest_plugin.py` via `[project.entry-points.pytest11]`: a `simulated_call`
+  fixture, a `streamdouble_config` fixture, and `pytest_assertrepr_compare` so
+  a failed latency assertion prints the summary block rather than `None < 800`.
+  **Not** in scope: starting the user's app. The plugin takes a URL.
+- `trace.py` and `--trace out.jsonl`: one JSON object per frame each way.
+  Closes the note in `session.py`. Payloads are opt-in (`--trace-payloads`) --
+  a 60 s call is ~30 MB of base64 nobody reads.
+- `Metrics.to_dict()` gains `schema_version`. It ships now and is consumed in
+  Phase 8; adding it *after* baselines exist is the release where you find out
+  you cannot.
+
+> ### ✅ REVIEW GATE 6 — API extraction + observation cost — PASSED
+>
+> Ran. 4 findings, all fixed and mutation-verified in
+> `tests/test_review_gate_6.py`. `/security-review` found nothing. Two of the
+> four were repeats of earlier gates' findings, in new code written by someone
+> who knew about them. See [Gate 6](#phase-7-and-gate-6).
+>
+> <details><summary>Original gate text</summary>
+>
+> ### ⛔ REVIEW GATE 6 — API extraction + observation cost
+> `/code-review high` and `/security-review`.
+> **Focused risk: the observer perturbing the observed, and the refactor
+> forking the path it was meant to unify.**
+> The trace writer is file I/O inside the receive loop -- the identical shape
+> to gate 2's quadratic `audio_received +=` finding. Assert a traced and an
+> untraced run report the same figures, extending the delay-injection harness
+> in `tests/test_measurement_validity.py`.
+> The trace is also a secret-exfiltration surface: `--param` is how agents
+> authenticate, the trace records the `start` frame, and the issue template
+> asks people to attach reproductions. Redact `customParameters` by default.
+> Plus loop reentrancy in the plugin, and `filterwarnings = ["error"]` turning
+> a plugin DeprecationWarning into a collection failure for every user.
+> Verify the refactor by mutation: break `exit_code_for` and confirm the CLI
+> test *and* the API test both go red. If only one does, the paths are still
+> separate.
+>
+> </details>
+
+### Phase 8 — One call becomes a trend (0.3.0)
+
+- `-n / --repeat N`, sequential only. Concurrent calls contend for the event
+  loop and corrupt the pacing statistics that are the tool's honesty claim.
+- `aggregate.py`: per-metric `n`, `n_measured`, min, median, max, p95, stddev.
+  `metrics.percentile` and `MIN_SAMPLES_FOR_PERCENTILE` are reused verbatim,
+  not re-derived -- across-run first-audio P95 is the genuinely missing metric
+  and it is exactly the one needing 20 runs to be honest, so `-n 5` publishes a
+  median and withholds the P95, and says so.
+- `--baseline` / `--save-baseline`. Refuses to compare incomparable runs: the
+  baseline records `schema_version`, the clip's SHA-256, the chaos seed,
+  impairments and `n`, because a different clip is a different experiment
+  rather than a regression. A regression is a median exceeding the baseline by
+  more than *both* `--tolerance-pct` (25%) and `--tolerance-ms` (50 ms), so a
+  40%-worse 5 ms figure is not a build failure. A metric that was `None` in
+  either series is incomparable, never an improvement -- "None is not zero"
+  applies to deltas, and deltas are where it is easiest to get wrong.
+  Regression exits 1; no sixth exit code is invented.
+- `action.yml`, a composite GitHub Action, plus one copyable workflow.
+
+> ### ✅ REVIEW GATE 7 — Statistics, and a YAML-to-shell seam — PASSED
+>
+> Ran. 4 findings, all fixed and mutation-verified in
+> `tests/test_review_gate_7.py`. Three of the four were the same failure:
+> a regression gate that silently stops checking. See [Gate 7](#phase-8-and-gate-7).
+>
+> <details><summary>Original gate text</summary>
+>
+> ### ⛔ REVIEW GATE 7 — Statistics, and a YAML-to-shell seam
+> `/code-review high`, and `/security-review` for `action.yml` alone.
+> **Focused risk: aggregation is where every honesty rule this project holds
+> gets quietly violated, because averaging is so natural.** A run where the
+> agent never spoke contributes `None` -- dropping it silently reports the mean
+> of the *successful* runs as the mean of all runs, and coercing it to 0 or the
+> timeout is worse. It must read `n=20, measured=17`. Is p95 over 5 runs the
+> max wearing a statistical hat? Does a regression verdict survive being run
+> twice -- a known 300 ms delta detected, and 20 clean pairs with zero false
+> positives? And `${{ inputs.url }}` interpolated into a `run:` block is
+> command injection into every consumer's CI runner.
+>
+> </details>
+
+### Phase 9 — The other half of the protocol (0.4.0)
+
+**Protocol verification, done at planning time** against
+https://www.twilio.com/docs/voice/media-streams/websocket-messages:
+
+- Confirmed, verbatim: *"Twilio sends the `mark` event only during
+  bidirectional Streams."* A fork therefore has **no mark echo and no
+  `clear`**. That is the design pivot, not a detail.
+- Confirmed: `media.track` is `"inbound"`/`"outbound"` and `start.tracks` is an
+  array of those, while the **TwiML** attribute uses `inbound_track`,
+  `outbound_track`, `both_tracks`. The same trap as `dtmf.track`, and it earns
+  a fourth citation in `protocol.py`'s docstring.
+- Confirmed: `<Connect><Stream>` is the bidirectional case, so today's
+  `["inbound"]` default is correct and stays correct.
+- **Not confirmed, and to be recorded as an inference rather than as fact:**
+  the docs state the bidirectional case affirmatively but never say that a
+  unidirectional app sending media commits a violation. Treating it as one is
+  the useful behaviour -- a simulator that accepts outbound audio on a fork
+  hides the bug it exists to find -- but it goes into `protocol.py` the way
+  `chaos.py` writes up the packet-loss model: flagged as inference, with the
+  reasoning, so whoever establishes the truth knows what to change. It is a
+  warning by default and a violation only under `--strict-fork`.
+
+- Fork mode: `--mode fork --track both|inbound|outbound`, with `--agent-audio`
+  supplying the outbound track, because in a fork Twilio sends the app the
+  audio *it* generated.
+- `--record-stereo call.wav`: caller left, agent right. The agent's channel is
+  placed at **arrival timestamps with real silence in the gaps**, never
+  concatenated -- concatenating a batching agent's frames would render a 9.5 s
+  reply delivered in 0.85 s as continuous audio, a picture of the *opposite* of
+  the barge-in bug this project is known for finding.
+- `examples/echo_agent.py` gains a fork endpoint that, in one mode, wrongly
+  tries to talk back.
+
+> ### ✅ REVIEW GATE 8 — Fidelity, and the golden file — PASSED
+>
+> Ran. 4 findings, all fixed and mutation-verified in
+> `tests/test_review_gate_8.py`. The golden file passed unregenerated, which
+> was this gate's headline risk. See [Gate 8](#gate-8).
+>
+> <details><summary>Original gate text</summary>
+>
+> ### ⛔ REVIEW GATE 8 — Fidelity, and the golden file
+> `/code-review high`. Security review not warranted: no new untrusted input,
+> no new network surface.
+> **Focused risk: this is the first phase since Phase 1 that changes bytes on
+> the wire, and the golden file is the only thing between a wrong byte and
+> three phases of downstream damage.** Does adding `track` plumbing change the
+> *default* media frame by a single byte? It must not, and a golden file that
+> needs regenerating is a finding rather than a chore. Did fork logic that
+> reads a clock or a socket land in `protocol.py`? The interleave is a
+> scheduling decision and belongs in `session.py`; the violation is a parsing
+> decision and belongs in `protocol.py`. Are the TwiML and WebSocket track
+> literals ever confused? Does the stereo writer survive a batching agent --
+> 9 s of audio sent in 0.9 s must span 9 s of file. Does fork mode hang waiting
+> for a mark echo that will never come?
+>
+> </details>
+
+### Deliberately dropped, with the reasoning
+
+**`--out` path confinement.** PLAN.md previously listed it as owed. It is
+security theatre: the path is typed by the user on their own command line, in a
+process with their privileges, and someone who can write
+`--out ~/.ssh/authorized_keys` could have run `cat >` instead. Gate 4's
+confinement of scenario `say:` paths is a genuinely different case and
+`scenario.py` already states why -- **scenario files travel**, so a path inside
+one is an instruction from a stranger rather than from the user.
+
+The residual risk worth acting on is the mirror of it, and it is a schema
+constraint rather than a check: **never add an output path to the scenario YAML
+schema.** No `record:` step, no `out:` key. The day one is added, confinement
+becomes owed.
+
+---
+
 ## 4. Testing strategy
 
 | Layer | What | Runs where |
@@ -471,6 +688,7 @@ something personally useful; that is the checkpoint that sustains the rest.
 | Resampling | unspecified | **`soxr`, optional extra** | No stdlib resampler is acceptable; aliasing at 8 kHz lands in the speech band |
 | Mark echo | Phase 4 | **Phase 2** | Agents gate turn-taking on the echo; a simulator that only logs marks hangs them |
 | CI | Phase 5 | **Phase 1** | The golden-file test makes a cross-platform byte-exactness claim, so it needed proving from the start |
+| Release cadence | A release per phase | **One release, after Phase 9** | Decided 2026-09-11. 0.1.1 is merged to `main` and deliberately unpublished. Publishing is irreversible -- a PyPI version can be yanked but never replaced -- and there is no user waiting on 0.1.1, so there is nothing to buy by shipping mid-roadmap and a burnt version number to lose |
 
 ### The protocol table in §2 was wrong
 
@@ -600,10 +818,13 @@ tests/          277 passing, on Linux + Windows × Python 3.11/3.12/3.13.
 1. **Real-agent validation is owed.** Gate 2 closed against
    the echo agent and hostile stubs, which is weaker than the plan intends.
    *This is the single most important thing to do next.*
-2. **The by-ear check is owed.** Round-tripped WAVs were produced and handed
-   over; nobody has confirmed they sound right. Objective substitutes exist in
-   `tests/test_signal_integrity.py` (440 Hz returns at 440 Hz, correlation
-   > 0.99, zero-lag cross-correlation peak), but they are not a pair of ears.
+2. ~~**The by-ear check is owed.**~~ **Done, 2026-09-11.** A human listened to
+   a clip before and after a full round trip and confirmed they sound the same,
+   and that the words are intelligible. See
+   [The by-ear check](#the-by-ear-check-done-2026-09-11). The objective
+   substitutes in `tests/test_signal_integrity.py` (440 Hz returns at 440 Hz,
+   correlation > 0.99, zero-lag cross-correlation peak) stand, and now have a
+   pair of ears behind them.
 3. **Windows scheduler granularity is genuinely ~15.6 ms**, so max lateness
    sits near a full frame even on healthy runs; mean lateness is ~4 ms.
    Cumulative drift stays near zero — deadline scheduling absorbs it. Worth
@@ -761,6 +982,333 @@ because it would be undetectable, and a test tool should present the harder case
 
 **Not a finding, having been checked:** `wss://` verifies certificates, because
 `websockets` uses `ssl.create_default_context` and nothing here overrides it.
+
+## The by-ear check, done 2026-09-11
+
+*Owed since gate 1. Closed while rehearsing a demo, which is the only reason it
+finally happened -- a demo needs someone to hear the audio, and the check needs
+someone to hear the audio, and they turn out to be the same act.*
+
+Gate 1 asked for a decoded payload to be listened to, on the grounds that tests
+can pass while the audio is garbage. It was deferred, then carried as an owed
+item through four more gates. Objective substitutes were written in the
+meantime (`tests/test_signal_integrity.py`: a 440 Hz tone returns at 440 Hz,
+correlation > 0.99, the cross-correlation peak sits at zero lag) and they are
+good evidence, but none of them can tell you that speech is *intelligible*.
+
+**What was checked.** Real TTS speech -- "How much would that cost per month?"
+from `fixtures/make_speech.py` -- before and after a complete round trip:
+
+    WAV -> 8 kHz mono -> mu-law -> 160-byte frames -> base64 -> JSON
+        -> WebSocket -> echo agent -> back -> decode -> WAV
+
+**Result: the two files sound the same, and the sentence is clearly
+intelligible.** No muffling, no buzz, no pitch shift, no truncation.
+
+**This is a stronger check than gate 1 asked for**, and the difference is worth
+stating rather than letting the tick mark imply more or less than it should.
+Gate 1 wanted a codec round trip listened to. What was actually listened to is
+the codec *plus* framing, base64, the wire format, a real socket, a real agent
+and the decode path -- every stage that could plausibly corrupt audio, end to
+end. A codec-only check would not have caught a framing or base64 fault; this
+one would.
+
+**What it still does not cover.** The audio is desktop TTS, so it has no accent,
+no background noise and no trailing off mid-sentence. Real recorded human speech
+remains worth having, and remains listed above as an open item -- not because
+this check was weak, but because it is the *input* that is synthetic, not the
+measurement.
+
+## Gate 8
+
+*2026-09-12.*
+
+**The golden file passed unregenerated.** That was the risk this gate was
+written around: Phase 9 is the first phase since Phase 1 to touch the frame
+builders, and the default `media` frame had to stay byte-identical. Adding the
+`track` plumbing changed nothing on the wire for an ordinary call.
+
+### Four findings, one root cause
+
+All four were the same mistake seen from different angles: **the two-track
+interleave was driven by the caller's frame list**, so anything about the
+agent's track that did not line up one-for-one with the caller's was lost.
+
+- **The agent's track restarted from frame 0 on every scenario step.** Pairing
+  by the send loop's own index meant `say` then `wait` forked the agent's
+  opening words, then forked those same words again as the "silence" step. An
+  app under test heard the agent say the same thing twice in one call -- for a
+  transcription consumer, a transcript of something that never happened. A
+  plain `call` has exactly one step, which is why every test passed.
+- **`scenario` accepted every fork flag and honoured none of them.** The flags
+  live on the *shared* option set, but `run_scenario_command` called
+  `config_from` without the agent's frames and skipped the validation that
+  `call` performed -- so it declared an outbound track in its start frame and
+  sent nothing on it for the whole call.
+- **Agent audio longer than the caller's was silently truncated.** A short
+  question and a long answer is the normal shape of a call, not an edge case.
+  The shorter-agent direction was already handled deliberately (no padding,
+  correctly); this was the same decision made wrongly in the other direction.
+- **`frames_sent` undercounted a two-track fork by half.** 150 frames on the
+  wire reported as 100 is a number somebody eventually reconciles against a
+  packet capture and finds wrong. Both totals are now published, because "the
+  caller sent 2.00s of audio" and "150 frames went over the wire" are different
+  questions and one number cannot answer both.
+
+Fixed at the root rather than symptom by symptom: the outbound track now has
+its own cursor on the session and its own drain phase. Three of the four could
+each have been patched where they surfaced -- a cursor here, a padding rule
+there, a counter increment -- and the fourth would still have been waiting.
+
+### Two of my own tests could not detect their own bugs
+
+Mutation testing is the only reason this was noticed, and it is the second gate
+running where it has caught a test that could not fail.
+
+The cursor test called `_next_outbound_frame()` directly, which walks the
+cursor correctly wherever the cursor lives -- so it passed against a mutation
+that reset the cursor inside `_stream_frames`, which *is* the bug. The scenario
+test called `api.run_scenario` with a config that already held the agent's
+frames, so it could not see that the command line never loaded them.
+
+Both were testing the layer beneath the one that was broken. That is the same
+mistake that let `streamdouble scenario` ship unreachable for the life of a
+public release, and the lesson keeps having to be relearned: **a test must
+drive the path that can be wrong, not the helper it calls.** Rewritten to run a
+real multi-step scenario and to invoke the installed entry point in a
+subprocess.
+
+The subprocess was not fastidiousness either. Calling `cli.main` in-process
+between this module's async tests runs `asyncio.run` inside their shared loop
+and turned four unrelated tests red without touching them.
+
+## Phase 9
+
+*2026-09-12.*
+
+### What Phase 9 built
+
+Fork mode (`--fork --track inbound|outbound|both --agent-audio X.wav`), stereo
+recording (`--record-stereo`), and a `/media-stream-fork` endpoint on the
+example agent with `talk_back=` and `mark_back=` misbehaviour modes so the new
+warning has a live demo.
+
+**The golden file passed unregenerated**, which was gate 8's headline risk
+stated in advance: this is the first phase since Phase 1 to touch the frame
+builders, and the default `media` frame had to stay byte-identical. Adding the
+`track` plumbing changed nothing on the wire for an ordinary call.
+
+### What the docs say, and where this tool infers
+
+Verified against the live documentation. Keeping these apart is the whole
+discipline of the phase:
+
+| Claim | Status |
+|---|---|
+| "Twilio sends the `mark` event only during bidirectional Streams" | **Documented, verbatim** |
+| `media.track` is `"inbound"`/`"outbound"`; TwiML uses `both_tracks` | **Documented** |
+| One `chunk`/`timestamp`/`sequenceNumber` sequence across both tracks | **Inference** |
+| An app sending media on a fork is committing a violation | **Inference** |
+
+The two-track counter question is not merely unanswered, it is unmentioned:
+the docs describe `chunk` as incrementing "with each subsequent message" and
+`timestamp` as measured "from the start of the stream", neither of which says
+*track*, and no example shows a two-track stream at all. A single stream-wide
+sequence is the better reading of both sentences and is what the encoder emits,
+labelled as an inference in `protocol.py` so whoever establishes the truth knows
+where to change it.
+
+The violation question is the same shape. The docs state the bidirectional case
+affirmatively -- "you can send WebSocket messages back to Twilio" -- and are
+silent on the other direction. So it is a **warning by default**, and a
+violation only under `--strict-fork`. Failing someone's build on this project's
+reading of a silence in the documentation is not a thing to do unasked.
+
+### Two bugs found by running it, not by testing it
+
+The same pattern as Phase 8, and worth recording because the tests were green
+both times:
+
+- **A correct fork consumer failed.** Silence on a one-way fork is the right
+  answer -- the app has no channel to speak on -- but it was reported as a
+  response timeout, exit 2. Every well-behaved fork consumer in the world would
+  have failed for doing exactly the right thing.
+- **`--strict-fork` did nothing.** The inference was enforced as a violation
+  regardless, which contradicted both the design and this project's own rule
+  about inferences. The flag now decides, and `SessionResult.warnings` exists
+  to carry the non-strict case -- a violation is something the docs say is
+  wrong, a warning is something this tool infers is wrong, and conflating them
+  is how a test tool starts making claims it cannot support.
+
+### A test that passed because of its own litter
+
+Redirecting documented commands' output into `tmp_path` -- so a test run stops
+dropping `call.jsonl` and `baseline.json` in the repository root -- turned the
+README's `--baseline` example red. It had only ever passed because an *earlier*
+documented command left a `baseline.json` behind for it to find.
+
+So the test depended on the mess it made, and cleaning up the mess broke it.
+The `.gitignore` entries that were hiding those files are gone too: a file
+appearing there again is now a real bug, and hiding it would have been the
+wrong fix twice over.
+
+## Phase 8 and gate 7
+
+*2026-09-11.*
+
+### What Phase 8 built
+
+`-n/--repeat` places several calls in sequence -- never parallel, because
+concurrent calls delay each other's frames and would corrupt the very
+statistics being gathered, worse the more runs were asked for. `aggregate.py`
+summarises them; `baseline.py` saves a series and compares a later one against
+it; `action.yml` is a composite GitHub Action.
+
+There is no `--retries` and there will not be. Repeating a call to measure its
+spread is useful; repeating it until it passes hides a flaky agent, and a tool
+offering the second cannot be trusted about the first.
+
+**Two bugs were found by running it rather than by testing it**, which is worth
+recording because both tests passed at the time:
+
+- **`delivery_ratio` could never be flagged as a regression.** A 50
+  *millisecond* absolute floor was applied to a dimensionless ratio ranging
+  from about 1 to 12, so no movement could ever clear it. That metric is what
+  the barge-in blind spot is made of, making it the worst possible one to
+  exempt silently. Metrics now carry a unit and get the floor for it.
+- **The baseline check ran after the whole series.** It placed every call and
+  *then* refused as incomparable, when the clip hash, seed and impairments were
+  all known beforehand. It now refuses before the first call -- the principle
+  the scenario loader already follows.
+
+The two-bar tolerance rule earned its keep immediately: a max-gap change of
++29% correctly did not fail the build, being only +13.6 ms.
+
+### Gate 7 findings
+
+**4 findings** (`tests/test_review_gate_7.py`, all mutation-verified). Three
+are the same failure wearing different clothes, and naming it is the point:
+**a regression gate that silently stops checking.** It does not crash and it
+does not print a wrong number -- it keeps producing a clean summary while
+nothing is verified, which is indistinguishable from working until a real
+regression ships.
+
+- **`--save-baseline` wrote a baseline from a run that measured nothing.**
+  Reproduced: against a silent agent it exits 2 and still writes a file whose
+  every median is `null`. Every later comparison then reads "not comparable"
+  and passes -- and looks healthy, because "not comparable" *is* the correct
+  response to missing data. The realistic path is a scheduled baseline refresh
+  running on a day the agent is down. Now refused, with
+  `--allow-unmeasured-baseline` as the deliberate escape hatch.
+- **`-n 1 --baseline` was permitted**, comparing single samples -- the exact
+  case this plan recorded as a precondition ("a baseline comparison must not
+  ship without `-n`") and which shipped anyway. A minimum of 3 runs is now
+  enforced when `--baseline` is given.
+- **`--tolerance-ms` silently did not apply to `delivery_ratio`**, and nothing
+  else did: `compare()` accepted a `tolerance_ratio` the CLI never passed and
+  no flag exposed. Someone loosening tolerances for a noisy environment would
+  reasonably believe it covered every metric. `--tolerance-ratio` added and
+  threaded through.
+- **A baseline value of `0` made a metric permanently uncatchable.** `not 0.0`
+  is true in Python, so `delta_pct` returned `None` and `regressed`
+  short-circuited on it. A gap recorded as 0.0 against a fast local stub could
+  climb to half a second against a real agent and never register. The
+  percentage really is undefined at zero, which is the argument for falling
+  back to the absolute bar rather than declining to judge.
+
+**One test initially failed to detect its own bug**, and mutation testing is
+the only reason that was noticed. The `--tolerance-ratio` test asserted that a
+loose tolerance exits 0 -- which the clean case does anyway, so it could not
+tell a working flag from one that parses and is then dropped. Removing
+`tolerance_ratio=args.tolerance_ratio` left all fourteen tests green. Rewritten
+to drive a run whose delivery ratio genuinely regresses and check the flag can
+call it off. A test that cannot fail is not a weaker test, it is a false
+statement about coverage.
+
+## Phase 7 and gate 6
+
+*2026-09-11.*
+
+### What Phase 7 built
+
+`api.py` is now the only implementation of "place a call". `cli.py` parses
+arguments, renders a report and picks an exit code, and knows nothing else --
+`CallReport.to_dict()` is the definition of `--json`, which the CLI prints and
+adds nothing to. `pytest_plugin.py` registers `simulated_call` and
+`streamdouble_config` through `pytest11`, so installing the package is the
+whole setup. `trace.py` records every frame in both directions as JSON Lines.
+`metrics.SCHEMA_VERSION` ships now and is consumed in Phase 8.
+
+Three things worth keeping from building it:
+
+**The pytest hook everyone would reach for does not work.** Explaining a `None`
+latency looks like a job for `pytest_assertrepr_compare`. It never fires:
+`None < 800` raises `TypeError` while *evaluating* the comparison, so the
+assertion never completes and pytest never asks a plugin to describe a mismatch
+that did not happen. It is done from `pytest_runtest_makereport` instead.
+Running a real pytest session through `pytester` is what revealed this --
+calling the fixture directly would have missed it, which is the same shape of
+mistake that let `streamdouble scenario` ship unreachable.
+
+**The redaction shipped broken and a reasonable test passed anyway.**
+`customParameters` is nested inside `start`; the first implementation read it
+from the top level, found nothing, and therefore wrote no parameters and ran no
+redaction -- while a "does the secret appear in the file" check passed cleanly.
+Absence is satisfied by a lookup that missed. The tests now assert the keys are
+**present** and the values **hidden**, because only the first half separates a
+redaction from a bug.
+
+**The suite was red for a reason that was not ours.** A
+`PytestUnraisableExceptionWarning` about an unclosed `ProactorEventLoop` was
+failing a random test per run. Measured before touching anything: twenty
+consecutive in-process calls leave zero unclosed loops and no socket growth, and
+the one surviving loop is the uvicorn test server's, still running. It is
+pytest-asyncio building a fresh loop per test on Windows. Filtered narrowly --
+two message shapes, verified narrow by raising a different unraisable and
+watching it still fail -- and the detection the warning was accidentally
+providing is now deliberate in `tests/test_no_resource_leaks.py`.
+
+### Gate 6 findings
+
+**4 findings** (`tests/test_review_gate_6.py`, all mutation-verified). The two
+worst are repeats, which is the argument for the gates existing:
+
+- **`trace.flush()` in a bare `finally`.** Reproduced both ways: a completely
+  successful call lost its entire report -- metrics, thresholds, recorded audio
+  -- because a side-file could not be opened; and a call to an unreachable agent
+  raised `PermissionError` instead of `ConnectionFailed`, aiming debugging at
+  the filesystem while the agent was down. **This is gate 2's finding exactly**:
+  cleanup replacing the real error. A failing trace is now reported on stderr,
+  `trace_path` stays `None` so no report claims a file that is not there, and
+  the call's own outcome stands.
+- **The trace had no cap at all**, reopening the vector gate 4 measured at
+  206 MB buffered and 436 MB peak. Two caps, because one is not enough: records
+  bounded by count, payloads by total bytes -- gate 4's endpoint sent *few*
+  frames and *enormous* ones, so a count-based limit alone lets a handful of
+  records carry hundreds of megabytes. Dropped counts stay exact.
+- **Tracing re-parsed every inbound frame** that `parse_outbound` had just
+  parsed, doubling JSON decode inside the receive loop -- the precise "observer
+  perturbs the observed" cost the design exists to avoid, and invisible to the
+  parity test because the echo agent sends 160-byte frames while real agents
+  batch to ~8000. `InboundMedia`/`Mark`/`Clear` now carry the frame they came
+  from, `compare=False` so that every existing test asserting on a whole parsed
+  frame keeps working -- which is how the equality consequence was found.
+- **Frames were recorded before the send was awaited**, so a frame whose send
+  raised appeared as though it went out. The frame it lied about was the last
+  one before a disconnect, which is the one someone opens a trace to look at.
+
+**And a flaky test of my own making.** The trace parity check compared one
+traced call against one untraced call -- a noisy estimator of a systematic
+effect. It passed alone and failed in sequence. Medians of three runs each way
+now, stable across three consecutive full runs. By this project's own standard
+a flaky detector is worse than none, because people learn to re-run it.
+
+**Security review: nothing found.** The one genuinely new surface is secrets in
+the trace, and it was already handled. Worth recording what was checked and
+cleared: scenario YAML still cannot set any output path (`_parse_step` enforces
+a six-verb allowlist), which upholds the schema constraint written down when
+`--out` confinement was dropped; `yaml.safe_load` throughout; no `eval`, `exec`,
+`pickle` or `subprocess` anywhere in `src/`.
 
 ## Gate 5's first finding, from reading rather than fresh eyes
 
