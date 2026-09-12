@@ -108,6 +108,7 @@ streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
 
 ```json
 {
+  "schema_version": 1,
   "time_to_first_audio_ms": 440.7,
   "mean_inbound_gap_ms": 15.6,
   "p95_inbound_gap_ms": 31.7,
@@ -150,6 +151,96 @@ Where 800 ms comes from: human turn-taking gaps cluster at
 (Stivers et al., PNAS 2009). The 800 ms figure itself is an industry rule of
 thumb for voice agents rather than a research finding — `metrics.py` says so
 too, rather than borrowing the paper's authority for it.
+
+## Use it from pytest
+
+Most people testing a voice agent already have a pytest suite. Installing the
+package registers a fixture, so a call is one line in it:
+
+```python
+async def test_the_agent_answers_quickly(simulated_call):
+    report = await simulated_call(AGENT_URL, audio="hello.wav")
+    assert report.spoke
+    assert report.time_to_first_audio_ms < 800
+```
+
+No shelling out, no parsing JSON. The CLI is a renderer over the same API, so
+what you assert on here and what `--json` prints cannot disagree.
+
+An agent that never spoke has `time_to_first_audio_ms` of `None`, and the
+plugin explains that failure rather than leaving you with a bare `TypeError`.
+Full reference, including per-suite configuration and the pytest-asyncio
+setting you need: **[docs/python-api.md](docs/python-api.md)**.
+
+## Catch a regression an absolute threshold cannot see
+
+An agent that answered in 300 ms and now answers in 700 ms has got more than
+twice as slow — and still passes `--max-first-audio-ms 800`. That is the
+regression teams actually care about, and it needs a *baseline* rather than a
+limit.
+
+```bash
+# once, on a known-good build
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  -n 20 --save-baseline baseline.json
+
+# in CI, from then on
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  -n 20 --baseline baseline.json
+```
+
+```
+  20 runs, 0 failed
+
+                      median       min       max       p95   stddev  n
+  first audio          181.7     166.4     194.1     193.2      9.2  20/20
+  mean gap              18.2      18.1      18.3      18.3      0.1  20/20
+  delivery ratio         1.1       1.1       1.2       1.2      0.0  20/20
+
+  against the baseline:
+    first audio      181.7 -> 585.8 (+404.1, +222%)  REGRESSION
+```
+
+A regression exits 1, same as a failed threshold — it is the same kind of fact.
+
+**`-n` is a distribution, not a retry.** There is no `--retries` and there will
+not be: repeating a call to measure its spread is useful, repeating it until it
+passes hides a flaky agent, and a tool that offers the second cannot be trusted
+about the first. Runs are sequential, never parallel — concurrent calls delay
+each other's frames and would corrupt the statistics being gathered.
+
+Three things the check refuses to do:
+
+- **Compare incomparable runs.** The baseline records a hash of the clip's
+  *contents*, the chaos seed and the impairments. Swap your test audio and it
+  says so and exits 4, rather than reporting a "regression" that is really two
+  different experiments being subtracted. It refuses before placing a single
+  call, since everything it needs to know is known beforehand.
+- **Fire on noise.** A change must exceed *both* a percentage and an absolute
+  floor. 5 ms becoming 8 ms is 60% worse and inaudible; 2000 ms becoming
+  2040 ms is 40 ms and nobody notices. Neither fails your build.
+- **Treat a missing measurement as an improvement.** An agent that has stopped
+  speaking has `null` where it had 400 ms. Subtracting those would report a
+  cheerful "−400 ms"; instead it reads `was 181.7, now never measured` and
+  counts as the most serious regression there is.
+
+Below 20 runs the P95 is withheld and the output says why, because a P95 over
+five samples is the maximum wearing a statistical hat.
+
+### In GitHub Actions
+
+```yaml
+- uses: shaswat28/streamdouble@main
+  with:
+    url: ws://localhost:8000/media-stream
+    audio: fixtures/hello.wav
+    repeat: "20"
+    baseline: baseline.json
+    max-first-audio-ms: "800"
+```
+
+The JSON results and the frame trace are uploaded as an artifact on every run,
+including failures — a failing run is the one whose trace you want.
 
 ## Script a whole call
 
@@ -201,6 +292,26 @@ on that. A simulator that goes quiet looks like a dead line rather than a quiet
 caller, and the resulting "my agent never finalises the transcript" is a bug in
 the test tool.
 
+## See what actually went over the wire
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --trace call.jsonl
+```
+
+One JSON object per frame, both directions, with timings. This is the artefact
+to attach when you think the *simulation* is wrong rather than your agent --
+which is the most valuable bug report this project can receive.
+
+Audio payloads are left out by default, because a minute of a call is about
+30 MB of base64 nobody reads; a hash of each is kept so two traces stay
+comparable. `--trace-payloads` includes them. `customParameters` values are
+redacted, because `--param` is how agents are authenticated and a trace exists
+to be sent to someone else; `--trace-secrets` opts out.
+
+Nothing is written while the call is running. A trace that changed the latency
+it was recording would not be a diagnostic.
+
 ## Simulate a bad connection
 
 ```bash
@@ -217,6 +328,51 @@ Packet loss is modelled as audio Twilio never received, so the agent sees
 `media.timestamp` jump rather than a frame go missing. The Twilio↔app leg is a
 WebSocket, which is TCP: a frame *cannot* vanish in transit. `chaos.py` explains
 the reasoning, and flags it as an inference the docs do not cover.
+
+## Hear both sides of the call
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --record-stereo call.wav
+```
+
+Caller on the left, agent on the right, in one file.
+
+**The agent's channel is placed at the instants its audio arrived**, with real
+silence in the gaps — not concatenated. That distinction is the whole point.
+Agents batch their outbound audio: the bug this tool is best known for finding
+was an agent sending 9.5 seconds of speech in 0.85 seconds, leaving the caller
+listening for another 8.7 seconds while the agent believed it had finished.
+Concatenating those frames would render that as a smooth, perfectly-timed reply
+— a picture of the opposite of the bug. Placed at arrival times, you can hear
+the burst and the silence after it.
+
+## Fork mode: the other half of Media Streams
+
+`<Connect><Stream>` is the bidirectional call an agent answers, and it is what
+everything above simulates. `<Start><Stream>` is the other half — a one-way
+fork, which is what transcription and compliance-recording apps consume.
+
+```bash
+streamdouble call ws://localhost:8000/media-stream-fork --audio hello.wav \
+  --fork --track both --agent-audio agent-reply.wav
+```
+
+A fork is one-way, and two things follow:
+
+- **No mark echo, and no `clear`.** The Twilio docs say verbatim that "Twilio
+  sends the `mark` event only during bidirectional Streams", so a simulator
+  that echoed marks here would be inventing a message real Twilio never sends.
+- **`--agent-audio` is required for an outbound track.** On a real fork Twilio
+  copies the agent's *own* audio to the app, so streamdouble has to supply both
+  halves. Streaming silence instead would not be a simpler simulation, it would
+  be a wrong one.
+
+An app that sends media back on a fork gets a **warning**, and the run still
+passes. The Twilio docs state the bidirectional case affirmatively and say
+nothing about this one, so treating it as a violation is streamdouble's
+inference rather than a documented rule — and this project does not fail your
+build on an inference unless you ask. `--strict-fork` is the asking.
 
 ## How this compares
 

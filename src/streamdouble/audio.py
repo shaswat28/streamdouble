@@ -13,6 +13,7 @@ in this module needs a WebSocket to reproduce, the layering is wrong.
 from __future__ import annotations
 
 import wave
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -220,6 +221,73 @@ def wav_to_ulaw_frames(path: str | Path, pad: bool = True) -> list[bytes]:
     mono = to_mono(samples)
     resampled = resample(mono, rate, SAMPLE_RATE)
     return frame_ulaw(g711.encode(resampled), pad=pad)
+
+
+def write_stereo_wav(
+    left: bytes,
+    right_segments: Sequence[tuple[float, bytes]],
+    path: str | Path,
+) -> None:
+    """Write both sides of a call to one stereo WAV: caller left, agent right.
+
+    ``left`` is continuous from the start of the call. ``right_segments`` is
+    ``(offset_seconds, mu-law bytes)`` pairs, each placed at the instant that
+    audio *arrived*, with real silence in the gaps between them.
+
+    **Placing rather than concatenating is the entire point, and getting it
+    wrong would invert the tool's most useful finding.** Agents batch their
+    outbound audio: this project's own headline bug was an agent sending 9.5
+    seconds of speech in 0.85 seconds, leaving the caller listening for another
+    8.7 seconds while the agent believed it had finished. Concatenating those
+    frames would produce a file in which the reply sounds continuous and
+    perfectly timed -- a picture of the opposite of the bug. Placed at arrival
+    times, the same data shows a burst followed by a long silence, which is
+    what actually happened on the wire.
+
+    A consequence worth stating: the right channel is a picture of *delivery*,
+    not of playback. What the caller would have heard is the same audio
+    stretched over its real duration. The two differ by exactly the
+    ``playback_tail_ms`` that ``metrics.py`` reports, and neither rendering is
+    wrong -- but only one of them shows the batching.
+
+    Overlapping segments are summed rather than replacing one another, because
+    dropping audio to make the arithmetic tidy would be the same class of
+    dishonesty in miniature.
+    """
+    left_samples = g711.decode(left)
+
+    latest_end = 0
+    decoded: list[tuple[int, np.ndarray]] = []
+    for offset_s, payload in right_segments:
+        if not payload:
+            continue
+        start = max(0, round(offset_s * SAMPLE_RATE))
+        samples = g711.decode(payload)
+        decoded.append((start, samples))
+        latest_end = max(latest_end, start + len(samples))
+
+    length = max(len(left_samples), latest_end)
+
+    # int32 while summing, so overlapping segments cannot wrap around before
+    # they are clipped. int16 addition overflowing silently would turn loud
+    # audio into loud noise of the opposite sign.
+    right_samples = np.zeros(length, dtype=np.int32)
+    for start, samples in decoded:
+        right_samples[start : start + len(samples)] += samples.astype(np.int32)
+    np.clip(right_samples, -32768, 32767, out=right_samples)
+
+    padded_left = np.zeros(length, dtype=np.int16)
+    padded_left[: len(left_samples)] = left_samples
+
+    interleaved = np.empty(length * 2, dtype=np.int16)
+    interleaved[0::2] = padded_left
+    interleaved[1::2] = right_samples.astype(np.int16)
+
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(2)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(interleaved.tobytes())
 
 
 def ulaw_to_wav(payload: bytes, path: str | Path) -> None:

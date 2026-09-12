@@ -270,6 +270,81 @@ async def media_stream(websocket: WebSocket) -> None:
         print("connection closed")
 
 
+@app.websocket("/media-stream-fork")
+async def media_stream_fork(websocket: WebSocket) -> None:
+    """A ``<Start><Stream>`` fork consumer -- the other half of Media Streams.
+
+    A fork is one-way. Twilio streams audio *to* this endpoint and there is no
+    channel back, which is what a transcription or compliance-recording app
+    consumes. So the correct implementation of this endpoint is almost
+    embarrassingly short: read frames, count them, say nothing.
+
+    Query parameters, for testing:
+        talk_back: send a media frame at this frame number, which a fork
+            consumer must not do. There is no channel back on a real fork, so
+            the frame would go nowhere -- and a simulator that quietly accepted
+            it would hide exactly the bug it exists to find.
+        mark_back: send a mark at this frame number. Twilio sends marks only on
+            bidirectional streams, so an app expecting one here is built on an
+            assumption that does not hold.
+    """
+    talk_back = int(websocket.query_params.get("talk_back", "0"))
+    mark_back = int(websocket.query_params.get("mark_back", "0"))
+
+    await websocket.accept()
+    print(f"fork opened (talk_back={talk_back}, mark_back={mark_back})")
+
+    stream_sid = ""
+    tracks: list[str] = []
+    counts: dict[str, int] = {}
+
+    try:
+        while True:
+            message = json.loads(await websocket.receive_text())
+            event = message.get("event")
+
+            if event == "connected":
+                print(f"  connected protocol={message.get('protocol')} "
+                      f"v{message.get('version')}")
+            elif event == "start":
+                start = message.get("start", {})
+                stream_sid = start.get("streamSid", "")
+                tracks = start.get("tracks", [])
+                print(f"  start   streamSid={stream_sid} tracks={tracks}")
+            elif event == "media":
+                track = message["media"].get("track", "?")
+                counts[track] = counts.get(track, 0) + 1
+                total = sum(counts.values())
+
+                if talk_back and total == talk_back:
+                    # Deliberately wrong, and the whole point of this mode.
+                    print("  !! sending media back on a one-way fork")
+                    await websocket.send_text(json.dumps({
+                        "event": "media",
+                        "streamSid": stream_sid,
+                        "media": {"payload": base64.b64encode(b"\xff" * 160).decode()},
+                    }))
+                if mark_back and total == mark_back:
+                    print("  !! sending a mark on a one-way fork")
+                    await websocket.send_text(json.dumps({
+                        "event": "mark",
+                        "streamSid": stream_sid,
+                        "mark": {"name": "fork-mark"},
+                    }))
+            elif event == "stop":
+                summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+                print(f"  stop    after {summary or 'no media'}")
+                break
+    except WebSocketDisconnect:
+        print("fork closed by the client")
+    except RuntimeError:
+        # The socket went away mid-receive. On a fork that is the ordinary
+        # ending, since the app has no way to say goodbye.
+        pass
+
+    print("fork connection closed")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Readiness probe, so tests can wait for the server without guessing."""
