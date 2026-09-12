@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, api, audio
+from . import __version__, api, audio, tracereport
 from . import baseline as baseline_module
 from .aggregate import RunSeries
 from .api import (
@@ -365,6 +365,22 @@ def build_parser() -> argparse.ArgumentParser:
         "url", help="WebSocket URL of the agent, e.g. ws://localhost:8000/media-stream"
     )
     _add_shared_options(play)
+
+    show = subcommands.add_parser(
+        "inspect",
+        help="summarise a --trace file",
+        description=(
+            "Read a frame trace written by --trace and summarise it: whether "
+            "the agent spoke and when, marks and their echoes, clears, gaps in "
+            "the agent's audio, and anything malformed. Opens no socket."
+        ),
+    )
+    show.add_argument("trace", type=Path, help="JSONL trace written by --trace")
+    show.add_argument("--json", action="store_true", help="print the summary as JSON")
+    show.add_argument(
+        "--gap-ms", type=float, default=tracereport.DEFAULT_GAP_MS, metavar="MS",
+        help=f"report agent audio gaps longer than this (default {tracereport.DEFAULT_GAP_MS:g})",
+    )
 
     return parser
 
@@ -979,7 +995,28 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
 #: command" for its whole life in a public repository, because every scenario
 #: test drove the Python API instead of the CLI. A documented feature was
 #: unreachable from the command line and nothing noticed.
-RUNNERS = {"call": run_call_command, "scenario": run_scenario_command}
+async def run_inspect_command(args: argparse.Namespace) -> int:
+    """Summarise a trace. Exits 0 whatever the trace shows: it reports, it does not judge."""
+    if not args.gap_ms > 0:
+        print("streamdouble: --gap-ms must be positive", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        summary = tracereport.read(args.trace, gap_ms=args.gap_ms)
+    except OSError as exc:
+        print(f"streamdouble: cannot read {args.trace}: {exc.strerror or exc}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.json:
+        print(json.dumps(summary.to_dict(), indent=2))
+    else:
+        print(tracereport.render(summary))
+    return EXIT_OK
+
+
+RUNNERS = {
+    "call": run_call_command,
+    "scenario": run_scenario_command,
+    "inspect": run_inspect_command,
+}
 
 
 def main(argv: list[str] | None = None) -> int:

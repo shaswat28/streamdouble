@@ -179,8 +179,16 @@ def test_a_documented_command_runs(document, command, server, tmp_path):
         else:
             rewritten.append(part)
 
-    # Keep the runs short; correctness of the output is covered elsewhere.
-    rewritten += ["--quiet-period", "0.3", "--max-drain", "3", "--response-timeout", "3"]
+    if rewritten[0] == "inspect":
+        # Opens no socket, so no timing flags; the trace named in prose is a
+        # placeholder and has to exist, or this fails on a missing file (a
+        # usage error) instead of on a command that does not parse.
+        trace_file = tmp_path / "documented.jsonl"
+        trace_file.write_text('{"t": 0.0, "dir": "out", "event": "media"}\n', encoding="utf-8")
+        rewritten = [str(trace_file) if p.endswith(".jsonl") else p for p in rewritten]
+    else:
+        # Keep the runs short; correctness of the output is covered elsewhere.
+        rewritten += ["--quiet-period", "0.3", "--max-drain", "3", "--response-timeout", "3"]
 
     completed = subprocess.run(
         [sys.executable, "-m", "streamdouble.cli", *rewritten],

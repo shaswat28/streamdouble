@@ -601,6 +601,22 @@ https://www.twilio.com/docs/voice/media-streams/websocket-messages:
 >
 > </details>
 
+## 3c. Phases 10-12 — after 0.2.0
+
+*Planned 2026-09-12. Built on branches, never directly on `main`. The
+non-goals still hold.*
+
+| Phase | Thesis | Gate |
+|---|---|---|
+| **10 — Make a trace readable** | `--trace` writes JSONL that nothing reads back. `streamdouble inspect` summarises it: spoke or not, first audio, marks vs. echoes, clears, agent audio gaps, sequence breaks, truncation. It is pure and treats the file as untrusted input | 9: `/code-review high` + `/security-review` |
+| **11 — CI-native output** | `--junit PATH`, one testcase per threshold or expectation, stdlib `xml.etree`. `action.yml` gets a `junit` input passed via env (never `${{ }}` in `run:`). A `None` metric is never a pass | 10: `/code-review high` + `/security-review` for `action.yml` |
+| **12 — Honest pacing on Windows** | `timeBeginPeriod(1)` around a paced run, a no-op elsewhere. Pacing stats record whether the timer was raised. Known issue 3 | 11: `/code-review high` |
+
+**Phase 10 status:** built on `roadmap/phase-10-inspect`, in
+`src/streamdouble/tracereport.py` and `tests/test_tracereport.py`. It is not
+called `inspect.py` so it does not shadow the stdlib module. **Gate 9 is
+owed** before merging.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `streamdouble inspect TRACE [--json] [--gap-ms MS]` summarises a `--trace`
+  file: whether the agent spoke and when, marks and their echoes, clears, gaps
+  in the agent's audio, sequence breaks, and malformed or truncated input. It
+  opens no socket and reads the file as untrusted input.
+
 ## 0.2.0 — 2026-09-12
 
 Three phases of work in one release. They were planned as one arc and built as
