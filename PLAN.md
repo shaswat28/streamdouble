@@ -464,6 +464,15 @@ That is LLM-as-judge with extra steps, and it is the first non-goal on the list.
   Phase 8; adding it *after* baselines exist is the release where you find out
   you cannot.
 
+> ### ✅ REVIEW GATE 6 — API extraction + observation cost — PASSED
+>
+> Ran. 4 findings, all fixed and mutation-verified in
+> `tests/test_review_gate_6.py`. `/security-review` found nothing. Two of the
+> four were repeats of earlier gates' findings, in new code written by someone
+> who knew about them. See [Gate 6](#phase-7-and-gate-6).
+>
+> <details><summary>Original gate text</summary>
+>
 > ### ⛔ REVIEW GATE 6 — API extraction + observation cost
 > `/code-review high` and `/security-review`.
 > **Focused risk: the observer perturbing the observed, and the refactor
@@ -480,6 +489,8 @@ That is LLM-as-judge with extra steps, and it is the first non-goal on the list.
 > Verify the refactor by mutation: break `exit_code_for` and confirm the CLI
 > test *and* the API test both go red. If only one does, the paths are still
 > separate.
+>
+> </details>
 
 ### Phase 8 — One call becomes a trend (0.3.0)
 
@@ -985,6 +996,91 @@ no background noise and no trailing off mid-sentence. Real recorded human speech
 remains worth having, and remains listed above as an open item -- not because
 this check was weak, but because it is the *input* that is synthetic, not the
 measurement.
+
+## Phase 7 and gate 6
+
+*2026-09-11.*
+
+### What Phase 7 built
+
+`api.py` is now the only implementation of "place a call". `cli.py` parses
+arguments, renders a report and picks an exit code, and knows nothing else --
+`CallReport.to_dict()` is the definition of `--json`, which the CLI prints and
+adds nothing to. `pytest_plugin.py` registers `simulated_call` and
+`streamdouble_config` through `pytest11`, so installing the package is the
+whole setup. `trace.py` records every frame in both directions as JSON Lines.
+`metrics.SCHEMA_VERSION` ships now and is consumed in Phase 8.
+
+Three things worth keeping from building it:
+
+**The pytest hook everyone would reach for does not work.** Explaining a `None`
+latency looks like a job for `pytest_assertrepr_compare`. It never fires:
+`None < 800` raises `TypeError` while *evaluating* the comparison, so the
+assertion never completes and pytest never asks a plugin to describe a mismatch
+that did not happen. It is done from `pytest_runtest_makereport` instead.
+Running a real pytest session through `pytester` is what revealed this --
+calling the fixture directly would have missed it, which is the same shape of
+mistake that let `streamdouble scenario` ship unreachable.
+
+**The redaction shipped broken and a reasonable test passed anyway.**
+`customParameters` is nested inside `start`; the first implementation read it
+from the top level, found nothing, and therefore wrote no parameters and ran no
+redaction -- while a "does the secret appear in the file" check passed cleanly.
+Absence is satisfied by a lookup that missed. The tests now assert the keys are
+**present** and the values **hidden**, because only the first half separates a
+redaction from a bug.
+
+**The suite was red for a reason that was not ours.** A
+`PytestUnraisableExceptionWarning` about an unclosed `ProactorEventLoop` was
+failing a random test per run. Measured before touching anything: twenty
+consecutive in-process calls leave zero unclosed loops and no socket growth, and
+the one surviving loop is the uvicorn test server's, still running. It is
+pytest-asyncio building a fresh loop per test on Windows. Filtered narrowly --
+two message shapes, verified narrow by raising a different unraisable and
+watching it still fail -- and the detection the warning was accidentally
+providing is now deliberate in `tests/test_no_resource_leaks.py`.
+
+### Gate 6 findings
+
+**4 findings** (`tests/test_review_gate_6.py`, all mutation-verified). The two
+worst are repeats, which is the argument for the gates existing:
+
+- **`trace.flush()` in a bare `finally`.** Reproduced both ways: a completely
+  successful call lost its entire report -- metrics, thresholds, recorded audio
+  -- because a side-file could not be opened; and a call to an unreachable agent
+  raised `PermissionError` instead of `ConnectionFailed`, aiming debugging at
+  the filesystem while the agent was down. **This is gate 2's finding exactly**:
+  cleanup replacing the real error. A failing trace is now reported on stderr,
+  `trace_path` stays `None` so no report claims a file that is not there, and
+  the call's own outcome stands.
+- **The trace had no cap at all**, reopening the vector gate 4 measured at
+  206 MB buffered and 436 MB peak. Two caps, because one is not enough: records
+  bounded by count, payloads by total bytes -- gate 4's endpoint sent *few*
+  frames and *enormous* ones, so a count-based limit alone lets a handful of
+  records carry hundreds of megabytes. Dropped counts stay exact.
+- **Tracing re-parsed every inbound frame** that `parse_outbound` had just
+  parsed, doubling JSON decode inside the receive loop -- the precise "observer
+  perturbs the observed" cost the design exists to avoid, and invisible to the
+  parity test because the echo agent sends 160-byte frames while real agents
+  batch to ~8000. `InboundMedia`/`Mark`/`Clear` now carry the frame they came
+  from, `compare=False` so that every existing test asserting on a whole parsed
+  frame keeps working -- which is how the equality consequence was found.
+- **Frames were recorded before the send was awaited**, so a frame whose send
+  raised appeared as though it went out. The frame it lied about was the last
+  one before a disconnect, which is the one someone opens a trace to look at.
+
+**And a flaky test of my own making.** The trace parity check compared one
+traced call against one untraced call -- a noisy estimator of a systematic
+effect. It passed alone and failed in sequence. Medians of three runs each way
+now, stable across three consecutive full runs. By this project's own standard
+a flaky detector is worse than none, because people learn to re-run it.
+
+**Security review: nothing found.** The one genuinely new surface is secrets in
+the trace, and it was already handled. Worth recording what was checked and
+cleared: scenario YAML still cannot set any output path (`_parse_step` enforces
+a six-verb allowlist), which upholds the schema constraint written down when
+`--out` confinement was dropped; `yaml.safe_load` throughout; no `eval`, `exec`,
+`pickle` or `subprocess` anywhere in `src/`.
 
 ## Gate 5's first finding, from reading rather than fresh eyes
 
