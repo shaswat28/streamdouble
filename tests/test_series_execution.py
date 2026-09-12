@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from streamdouble import api
-from streamdouble.cli import main
+from streamdouble.cli import MIN_RUNS_FOR_COMPARISON, main
 from streamdouble.session import SessionConfig
 
 #: Marker applied per-test rather than per-module.
@@ -155,7 +155,7 @@ def test_a_baseline_from_a_different_clip_is_refused_before_any_call(
     loader follows: validated before the socket opens.
     """
     baseline_path = tmp_path / "base.json"
-    assert main(cli_args(server, speech_8k_path, "-n", "2",
+    assert main(cli_args(server, speech_8k_path, "-n", str(MIN_RUNS_FOR_COMPARISON),
                          "--save-baseline", str(baseline_path), "--quiet")) == 0
     capsys.readouterr()
 
@@ -175,13 +175,16 @@ def test_a_timeout_outranks_a_regression(server, speech_8k_path, tmp_path: Path)
     lose the more specific fact, which is the same ordering a single call uses.
     """
     baseline_path = tmp_path / "base.json"
-    assert main(cli_args(server, speech_8k_path, "-n", "2",
+    assert main(cli_args(server, speech_8k_path, "-n", str(MIN_RUNS_FOR_COMPARISON),
                          "--save-baseline", str(baseline_path), "--quiet")) == 0
 
+    # MIN_RUNS_FOR_COMPARISON rather than a literal: gate 7 added a floor on
+    # runs for a baseline comparison, and this test hard-coded 2 -- so the
+    # guard turned it red, correctly, by refusing before the calls were placed.
     code = main([
         "call", f"{server}?mode=silent",
         "--audio", str(speech_8k_path),
-        "-n", "2",
+        "-n", str(MIN_RUNS_FOR_COMPARISON),
         "--baseline", str(baseline_path),
         "--quiet",
         "--quiet-period", "0.3", "--max-drain", "2", "--response-timeout", "2",

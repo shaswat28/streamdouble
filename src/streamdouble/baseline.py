@@ -19,7 +19,10 @@ check was set up rather than a finding about the agent.
 **A regression must clear two bars, not one.** Percentage alone makes a 40%
 worse 5 ms figure a build failure; milliseconds alone lets a 400 ms number
 drift to 440 ms forever. Both, so the check fires on changes that a caller
-would actually notice.
+would actually notice. The single exception is a baseline of zero, where no
+percentage exists -- there the absolute bar decides alone, because requiring a
+percentage that can never be computed would make that metric uncatchable for
+the life of the baseline.
 
 **A metric that was missing in either series is incomparable, never an
 improvement.** "None is not zero" is the rule the whole project turns on, and
@@ -125,7 +128,13 @@ class MetricDelta:
 
     @property
     def delta_pct(self) -> float | None:
-        if not self.comparable or not self.before:
+        """Proportional change, or ``None`` when there is no proportion.
+
+        A baseline of zero has no percentage: every increase is infinite. That
+        is a real property of the arithmetic, not a missing value -- see
+        :attr:`regressed` for why the difference matters.
+        """
+        if not self.comparable or self.before == 0:
             return None
         return (self.after - self.before) / self.before * 100.0  # type: ignore[operator]
 
@@ -140,8 +149,15 @@ class MetricDelta:
             return False
         delta = self.delta or 0.0
         delta_pct = self.delta_pct
+
         if delta_pct is None:
-            return False
+            # A baseline of zero. Declining to judge here would make the metric
+            # permanently uncatchable: a gap recorded as 0.0 against a fast
+            # local stub could climb to half a second against a real agent and
+            # never register, because the percentage bar can never be cleared.
+            # The absolute bar still means something, so it decides alone.
+            return delta > self.tolerance_abs
+
         return delta > self.tolerance_abs and delta_pct > self.tolerance_pct
 
     def to_dict(self) -> dict[str, Any]:
