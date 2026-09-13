@@ -95,8 +95,10 @@ def _call_suite(report: CallReport, name: str) -> ET.Element:
     else:
         suite.case("no timeout")
 
+    # `what` is Expect.describe(), which already reads "expect clear" or
+    # "expect no clear". Prefixing it again gave "expect expect clear" (gate 10).
     for what, passed in result.expectations:
-        suite.case(f"expect {what}", failure=None if passed else f"expected {what}")
+        suite.case(what, failure=None if passed else f"failed: {what}")
 
     for outcome in report.thresholds:
         label = f"threshold: {outcome.threshold.name}"
@@ -141,13 +143,23 @@ def build(
     name: str = "streamdouble",
     comparison: Comparison | None = None,
     exit_code: int | None = None,
+    error: str | None = None,
 ) -> ET.ElementTree:
     """One ``<testsuite>`` per call, plus one for a baseline comparison.
 
     ``exit_code`` is the series-level code; it gates the comparison suite's
     verdict, since a comparison can fail when every call passed.
+
+    ``error`` adds a failing ``streamdouble`` suite, for when the command
+    failed in a way no call report reflects: a connection that never opened,
+    a usage error, a baseline refused after every call passed. Gate 10 found
+    that last case writing an all-green report next to exit 4.
     """
     root = ET.Element("testsuites", name=_clean(name))
+    if error is not None:
+        suite = _Suite("streamdouble")
+        suite.case("run", failure=error)
+        root.append(suite.finish())
     for index, report in enumerate(reports):
         suffix = f" run {index + 1}" if len(reports) > 1 else ""
         root.append(_call_suite(report, f"{name}{suffix}"))

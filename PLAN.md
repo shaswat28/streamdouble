@@ -649,7 +649,26 @@ called `inspect.py` so it does not shadow the stdlib module.
   markup but not NUL, and one hostile violation message would otherwise
   produce a file every CI parser rejects.
 
-**Gate 10 is owed** before merging.
+> ### ✅ REVIEW GATE 10 — PASSED
+>
+> `/security-review` found nothing. The `junit` input reaches the shell only
+> through env as a quoted argument, and the XML is written, never parsed.
+> `/code-review high` found 3 issues, all fixed, with regression tests in
+> `tests/test_review_gate_10.py`. All 4 tests fail against `b5ea49b`. Two of
+> the three broke the module's own headline promise that the report is never
+> greener than the exit code:
+>
+> 1. **Refused baseline, green report.** `run_series` wrote the XML before
+>    the `--save-baseline` unmeasured-metric refusal. A silent `--fork`
+>    series, where every run correctly passes, exited 4 next to an all-green
+>    file. The refusal now rewrites the report with a failing `streamdouble`
+>    suite.
+> 2. **Early exits wrote nothing.** A connection failure or usage error left
+>    whatever file was already at `--junit`, which on a reused workspace is
+>    the last run's green report. `main` now writes a failing report for any
+>    non-zero exit that produced none.
+> 3. **"expect expect clear".** Expectations are already stored as
+>    `Expect.describe()`. The prefix is gone.
 
 ### Deliberately dropped, with the reasoning
 
