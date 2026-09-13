@@ -601,6 +601,44 @@ https://www.twilio.com/docs/voice/media-streams/websocket-messages:
 >
 > </details>
 
+## 3c. Phases 10-12 — after 0.2.0
+
+*Planned 2026-09-12. Built on branches, never directly on `main`. The
+non-goals still hold.*
+
+| Phase | Thesis | Gate |
+|---|---|---|
+| **10 — Make a trace readable** | `--trace` writes JSONL that nothing reads back. `streamdouble inspect` summarises it: spoke or not, first audio, marks vs. echoes, clears, agent audio gaps, sequence breaks, truncation. It is pure and treats the file as untrusted input | 9: `/code-review high` + `/security-review` |
+| **11 — CI-native output** | `--junit PATH`, one testcase per threshold or expectation, stdlib `xml.etree`. `action.yml` gets a `junit` input passed via env (never `${{ }}` in `run:`). A `None` metric is never a pass | 10: `/code-review high` + `/security-review` for `action.yml` |
+| **12 — Honest pacing on Windows** | `timeBeginPeriod(1)` around a paced run, a no-op elsewhere. Pacing stats record whether the timer was raised. Known issue 3 | 11: `/code-review high` |
+
+**Phase 10 status:** built on `roadmap/phase-10-inspect`, in
+`src/streamdouble/tracereport.py` and `tests/test_tracereport.py`. It is not
+called `inspect.py` so it does not shadow the stdlib module.
+
+> ### ✅ REVIEW GATE 9 — PASSED
+>
+> `/security-review` found nothing: the command reads one path from its own
+> argv, parses JSON only, and writes nothing. `/code-review high` found 3
+> bugs, all fixed, with regression tests in `tests/test_review_gate_9.py`.
+> All 7 tests fail against `1ad856c`. All three findings broke the project's
+> honesty rules:
+>
+> 1. **Counts were read off capped lists.** `clears` came from a list that
+>    stops at 50, so 120 clears rendered as "clears 50", and gaps had no
+>    total. Now exact: `clear_count` from the event counter, and
+>    `media_gap_count`.
+> 2. **Times were raw `perf_counter` readings.** "first caller audio
+>    87842.778s" was found by running it against the echo agent, not by
+>    reading the code. Now seconds from the first record, with `origin_t`
+>    kept in the JSON.
+> 3. **No data read as a silent agent.** An empty or wrong file printed
+>    "agent spoke no" and exited 0. Now "NO TRACE RECORDS", `"spoke": null`,
+>    and exit 4.
+>
+> A dry-run re-review found one more: `run_inspect_command`'s docstring still
+> promised exit 0. Fixed. The full suite passes (549).
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
