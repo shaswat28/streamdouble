@@ -988,15 +988,14 @@ async def run_scenario_command(args: argparse.Namespace) -> int:
     return render(args, call_report)
 
 
-#: Subcommand name to the coroutine that runs it.
-#:
-#: Module level so a test can check it against the parser's own subcommand
-#: list. `streamdouble scenario` parsed happily and then died with "unknown
-#: command" for its whole life in a public repository, because every scenario
-#: test drove the Python API instead of the CLI. A documented feature was
-#: unreachable from the command line and nothing noticed.
 async def run_inspect_command(args: argparse.Namespace) -> int:
-    """Summarise a trace. Exits 0 whatever the trace shows: it reports, it does not judge."""
+    """Summarise a trace.
+
+    Exits 0 whatever a real trace shows about the agent: it reports, it does
+    not judge. Exits EXIT_USAGE when the file cannot be read or holds no frame
+    records at all -- gate 9 found an empty or wrong file reading as "agent
+    spoke no" with exit 0, which is missing data presented as a verdict.
+    """
     if not args.gap_ms > 0:
         print("streamdouble: --gap-ms must be positive", file=sys.stderr)
         return EXIT_USAGE
@@ -1009,9 +1008,20 @@ async def run_inspect_command(args: argparse.Namespace) -> int:
         print(json.dumps(summary.to_dict(), indent=2))
     else:
         print(tracereport.render(summary))
+    if summary.empty:
+        # Gate 9: a wrong or empty file used to exit 0 reading "agent spoke no".
+        print(f"streamdouble: {args.trace} contains no trace records", file=sys.stderr)
+        return EXIT_USAGE
     return EXIT_OK
 
 
+#: Subcommand name to the coroutine that runs it.
+#:
+#: Module level so a test can check it against the parser's own subcommand
+#: list. `streamdouble scenario` parsed happily and then died with "unknown
+#: command" for its whole life in a public repository, because every scenario
+#: test drove the Python API instead of the CLI. A documented feature was
+#: unreachable from the command line and nothing noticed.
 RUNNERS = {
     "call": run_call_command,
     "scenario": run_scenario_command,

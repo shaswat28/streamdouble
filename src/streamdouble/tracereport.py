@@ -78,6 +78,10 @@ class TraceSummary:
     #: Frames the agent sent that streamdouble itself could not parse.
     unparseable_frames: int = 0
     events: Counter = field(default_factory=Counter)
+    #: The first valid ``t`` in the file. Trace times are raw perf_counter
+    #: readings with an arbitrary origin, so everything a person reads is
+    #: relative to this. Gate 9: "first caller audio 87842.778s" said nothing.
+    origin_t: float | None = None
     first_media_out_t: float | None = None
     first_media_in_t: float | None = None
     last_media_in_t: float | None = None
@@ -87,11 +91,30 @@ class TraceSummary:
     clear_times: list[float] = field(default_factory=list)
     #: (start_t, length_ms) of silences in agent audio longer than the gap.
     media_gaps: list[tuple[float, float]] = field(default_factory=list)
+    #: Exact number of gaps; ``media_gaps`` stops listing at ``_MAX_LISTED``.
+    media_gap_count: int = 0
     #: (direction, previous, current) sequence numbers that did not go up by one.
     sequence_breaks: list[tuple[str, int, int]] = field(default_factory=list)
     sequence_break_count: int = 0
     #: The writer's own truncation note, if present.
     truncated: dict[str, Any] | None = None
+
+    @property
+    def empty(self) -> bool:
+        """No frame records at all: not a trace, so nothing can be said about an agent."""
+        return not any(key.startswith(("in:", "out:")) for key in self.events) and (
+            self.unparseable_frames == 0
+        )
+
+    @property
+    def clear_count(self) -> int:
+        """Exact, from the event counter -- not the capped ``clear_times`` list."""
+        return self.events["in:clear"]
+
+    def relative(self, t: float | None) -> float | None:
+        if t is None or self.origin_t is None:
+            return None
+        return t - self.origin_t
 
     @property
     def spoke(self) -> bool:
@@ -127,18 +150,24 @@ class TraceSummary:
             "oversized_lines": self.oversized_lines,
             "stopped_early": self.stopped_early,
             "unparseable_frames": self.unparseable_frames,
+            "empty": self.empty,
             "events": dict(sorted(self.events.items())),
-            "spoke": self.spoke,
-            "first_media_out_t": self.first_media_out_t,
-            "first_media_in_t": self.first_media_in_t,
-            "last_media_in_t": self.last_media_in_t,
+            # None when the file holds no frames: "no data", not "silent agent".
+            "spoke": None if self.empty else self.spoke,
+            "origin_t": self.origin_t,
+            "first_media_out_s": self.relative(self.first_media_out_t),
+            "first_media_in_s": self.relative(self.first_media_in_t),
+            "last_media_in_s": self.relative(self.last_media_in_t),
             "first_audio_after_first_send_ms": self.first_audio_after_first_send_ms,
             "marks_sent": len(self.marks_sent),
             "marks_echoed": len(self.marks_echoed),
             "unechoed_marks": self.unechoed_marks[:_MAX_LISTED],
-            "clear_times": self.clear_times[:_MAX_LISTED],
+            "clear_count": self.clear_count,
+            "clear_times_s": [self.relative(t) for t in self.clear_times[:_MAX_LISTED]],
+            "media_gap_count": self.media_gap_count,
             "media_gaps": [
-                {"t": t, "ms": round(ms, 1)} for t, ms in self.media_gaps[:_MAX_LISTED]
+                {"after_s": self.relative(t), "ms": round(ms, 1)}
+                for t, ms in self.media_gaps[:_MAX_LISTED]
             ],
             "sequence_break_count": self.sequence_break_count,
             "sequence_breaks": [
@@ -219,6 +248,8 @@ def summarise(lines: Iterable[str | bytes], *, gap_ms: float = DEFAULT_GAP_MS) -
         event = record.get("event")
         summary.events[f"{direction}:{_label(event)}"] += 1
         t = _number(record.get("t"))
+        if t is not None and summary.origin_t is None:
+            summary.origin_t = t
 
         seq = _sequence(record.get("seq"))
         if seq is not None:
@@ -238,8 +269,10 @@ def summarise(lines: Iterable[str | bytes], *, gap_ms: float = DEFAULT_GAP_MS) -
                     summary.first_media_in_t = t
                 elif summary.last_media_in_t is not None:
                     silence_ms = (t - summary.last_media_in_t) * 1000.0
-                    if silence_ms > gap_ms and len(summary.media_gaps) < _MAX_LISTED:
-                        summary.media_gaps.append((summary.last_media_in_t, silence_ms))
+                    if silence_ms > gap_ms:
+                        summary.media_gap_count += 1
+                        if len(summary.media_gaps) < _MAX_LISTED:
+                            summary.media_gaps.append((summary.last_media_in_t, silence_ms))
                 summary.last_media_in_t = t
         elif event == "mark":
             name = _label(record.get("mark"))
@@ -287,23 +320,34 @@ def render(summary: TraceSummary) -> str:
     """The human-readable form."""
 
     def when(t: float | None) -> str:
-        return "none" if t is None else f"{t:.3f}s"
+        offset = summary.relative(t)
+        return "none" if offset is None else f"{offset:.3f}s"
 
-    first_ms = summary.first_audio_after_first_send_ms
-    lines = [
-        f"records             {summary.records} ({summary.lines} lines)",
-        f"agent spoke         {'yes' if summary.spoke else 'no'}",
-        f"first caller audio  {when(summary.first_media_out_t)}",
-        f"first agent audio   {when(summary.first_media_in_t)}",
-        "agent after caller  " + ("none" if first_ms is None else f"{first_ms:.0f} ms"),
-        f"marks               {len(summary.marks_sent)} sent by agent, "
-        f"{len(summary.marks_echoed)} echoed",
-        f"clears              {len(summary.clear_times)}",
-    ]
+    if summary.empty:
+        # Absence of a trace is not evidence about an agent (gate 9).
+        lines = [
+            f"NO TRACE RECORDS    {summary.lines} lines, none of them a frame "
+            "record. Is this a file written by --trace?"
+        ]
+    else:
+        first_ms = summary.first_audio_after_first_send_ms
+        lines = [
+            f"records             {summary.records} ({summary.lines} lines)",
+            "times               seconds from the first record",
+            f"agent spoke         {'yes' if summary.spoke else 'no'}",
+            f"first caller audio  {when(summary.first_media_out_t)}",
+            f"first agent audio   {when(summary.first_media_in_t)}",
+            "agent after caller  " + ("none" if first_ms is None else f"{first_ms:.0f} ms"),
+            f"marks               {len(summary.marks_sent)} sent by agent, "
+            f"{len(summary.marks_echoed)} echoed",
+            f"clears              {summary.clear_count}",
+        ]
     if unechoed := summary.unechoed_marks:
         lines.append(f"  unechoed marks: {', '.join(unechoed[:10])}")
+    if summary.media_gap_count:
+        lines.append(f"agent audio gaps    {summary.media_gap_count}")
     for t, ms in summary.media_gaps[:10]:
-        lines.append(f"  agent audio gap of {ms:.0f} ms after {t:.3f}s")
+        lines.append(f"  {ms:.0f} ms after {when(t)}")
     if summary.sequence_break_count:
         lines.append(f"sequence breaks     {summary.sequence_break_count}")
         for direction, previous, current in summary.sequence_breaks[:10]:
