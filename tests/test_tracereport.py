@@ -191,7 +191,7 @@ def test_inspect_prints_a_summary(tmp_path: Path, capsys):
 
 def test_inspect_json_is_parseable(tmp_path: Path, capsys):
     path = tmp_path / "t.jsonl"
-    path.write_text("", encoding="utf-8")
+    path.write_text("\n".join(lines({"t": 0.0, "dir": "out", "event": "media"})), encoding="utf-8")
     assert cli.main(["inspect", "--json", str(path)]) == cli.EXIT_OK
     assert json.loads(capsys.readouterr().out)["spoke"] is False
 

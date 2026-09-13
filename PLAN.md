@@ -614,8 +614,30 @@ non-goals still hold.*
 
 **Phase 10 status:** built on `roadmap/phase-10-inspect`, in
 `src/streamdouble/tracereport.py` and `tests/test_tracereport.py`. It is not
-called `inspect.py` so it does not shadow the stdlib module. **Gate 9 is
-owed** before merging.
+called `inspect.py` so it does not shadow the stdlib module.
+
+> ### ✅ REVIEW GATE 9 — PASSED
+>
+> `/security-review` found nothing: the command reads one path from its own
+> argv, parses JSON only, and writes nothing. `/code-review high` found 3
+> bugs, all fixed, with regression tests in `tests/test_review_gate_9.py`.
+> All 7 tests fail against `1ad856c`. All three findings broke the project's
+> honesty rules:
+>
+> 1. **Counts were read off capped lists.** `clears` came from a list that
+>    stops at 50, so 120 clears rendered as "clears 50", and gaps had no
+>    total. Now exact: `clear_count` from the event counter, and
+>    `media_gap_count`.
+> 2. **Times were raw `perf_counter` readings.** "first caller audio
+>    87842.778s" was found by running it against the echo agent, not by
+>    reading the code. Now seconds from the first record, with `origin_t`
+>    kept in the JSON.
+> 3. **No data read as a silent agent.** An empty or wrong file printed
+>    "agent spoke no" and exited 0. Now "NO TRACE RECORDS", `"spoke": null`,
+>    and exit 4.
+>
+> A dry-run re-review found one more: `run_inspect_command`'s docstring still
+> promised exit 0. Fixed. The full suite passes (549).
 
 ### Deliberately dropped, with the reasoning
 
