@@ -167,6 +167,9 @@ class Metrics:
     pacing_late_frames: int = 0
     pacing_max_lateness_ms: float = 0.0
     pacing_mean_lateness_ms: float = 0.0
+    #: Which timer the pacing ran on. A lateness figure is only interpretable
+    #: alongside it: on Windows the default tick alone accounts for ~8 ms.
+    pacing_timer: str = "not requested"
 
     @property
     def barge_in_blind_spot_ms(self) -> float | None:
@@ -246,6 +249,7 @@ class Metrics:
                 "max_lateness_ms": _round(self.pacing_max_lateness_ms),
                 "mean_lateness_ms": _round(self.pacing_mean_lateness_ms, 2),
                 "measurement_is_reliable": self.measurement_is_reliable,
+                "timer": self.pacing_timer,
             },
         }
 
@@ -284,6 +288,7 @@ def compute(result: SessionResult) -> Metrics:
         pacing_late_frames=result.pacing.late_frames,
         pacing_max_lateness_ms=result.pacing.max_lateness_ms,
         pacing_mean_lateness_ms=result.pacing.mean_lateness_ms,
+        pacing_timer=result.pacing.timer,
     )
 
     time_to_first = result.time_to_first_audio_s
