@@ -639,6 +639,37 @@ called `inspect.py` so it does not shadow the stdlib module.
 > A dry-run re-review found one more: `run_inspect_command`'s docstring still
 > promised exit 0. Fixed. The full suite passes (549).
 
+**Phase 11 status:** built on `roadmap/phase-11-junit`, in
+`src/streamdouble/junit.py` and `tests/test_junit.py`. Two design points:
+
+- A `verdict` testcase fails whenever the exit code is non-zero, so an exit
+  code rule with no testcase of its own still turns the report red. This is
+  mutation-tested.
+- Characters illegal in XML 1.0 are replaced, because `xml.etree` escapes
+  markup but not NUL, and one hostile violation message would otherwise
+  produce a file every CI parser rejects.
+
+> ### ✅ REVIEW GATE 10 — PASSED
+>
+> `/security-review` found nothing. The `junit` input reaches the shell only
+> through env as a quoted argument, and the XML is written, never parsed.
+> `/code-review high` found 3 issues, all fixed, with regression tests in
+> `tests/test_review_gate_10.py`. All 4 tests fail against `b5ea49b`. Two of
+> the three broke the module's own headline promise that the report is never
+> greener than the exit code:
+>
+> 1. **Refused baseline, green report.** `run_series` wrote the XML before
+>    the `--save-baseline` unmeasured-metric refusal. A silent `--fork`
+>    series, where every run correctly passes, exited 4 next to an all-green
+>    file. The refusal now rewrites the report with a failing `streamdouble`
+>    suite.
+> 2. **Early exits wrote nothing.** A connection failure or usage error left
+>    whatever file was already at `--junit`, which on a reused workspace is
+>    the last run's green report. `main` now writes a failing report for any
+>    non-zero exit that produced none.
+> 3. **"expect expect clear".** Expectations are already stored as
+>    `Expect.describe()`. The prefix is gone.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is

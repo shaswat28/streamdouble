@@ -146,6 +146,19 @@ Two things that behaviour turns on, both deliberate:
   unrelated stall does not condemn a measurement taken thousands of frames
   earlier — `max_lateness_ms` is published alongside for the full picture.
 
+For a CI test-report viewer, add a JUnit XML report:
+
+```bash
+streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
+  --max-first-audio-ms 800 --junit junit.xml
+```
+
+Each threshold, scenario expectation, protocol check and timeout is its own
+testcase. A final `verdict` case fails whenever the exit code is non-zero, so
+the report is never greener than the job. A threshold on a metric that was
+never measured is a failure; under `--allow-no-audio` it is *skipped*, not
+passed, because nothing was checked.
+
 Where 800 ms comes from: human turn-taking gaps cluster at
 [0–200 ms across languages](https://www.pnas.org/doi/10.1073/pnas.0903616106)
 (Stivers et al., PNAS 2009). The 800 ms figure itself is an industry rule of
