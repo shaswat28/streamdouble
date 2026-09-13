@@ -670,6 +670,75 @@ called `inspect.py` so it does not shadow the stdlib module.
 > 3. **"expect expect clear".** Expectations are already stored as
 >    `Expect.describe()`. The prefix is gone.
 
+**Phase 12 status:** built on `roadmap/phase-12-timer`, in
+`src/streamdouble/timer.py` and `tests/test_timer.py`. It resolves Known issue 3.
+
+Measured twice, on Windows 11 with CPython 3.12.10 and the proactor loop,
+median of 6 alternating runs each way. First a bare pacer loop of 300 frames
+with no socket, before writing any code. Then real calls against the echo
+agent, with the request forced off for the default row:
+
+| Measurement | Timer | Mean late | Max late | Other |
+|---|---|---|---|---|
+| Bare pacer | System default | 8.21 ms | 17.1 ms | 287/300 late |
+| Bare pacer | `timeBeginPeriod(1)` | 1.23 ms | 3.2 ms | 186/300 late |
+| Real call | System default | 4.28 ms | 28.8 ms | first audio 183 ms |
+| Real call | `timeBeginPeriod(1)` | 1.34 ms | 6.7 ms | first audio 182 ms |
+
+What this showed:
+
+- **A first draft over-claimed, and the second measurement caught it.** Docs
+  written from the bare-pacer figures said the 8.21 ms default crossed the 5 ms
+  line in `measurement_is_reliable`, so unmodified runs would flag themselves
+  unreliable. Real calls measured 4.28 ms, under the line and matching Known
+  issue 3's ~4 ms. The bare loop is worse because nothing else wakes the event
+  loop between frames. The docs now cite the real-call figures and say the
+  change sharpens already-reliable figures rather than rescuing unreliable ones.
+- **First audio did not move.** That is the expected result: precise pacing
+  should not shift a latency the pacing was already honest about.
+- **Why asyncio is affected at all.** `IocpProactor._poll` waits in
+  `GetQueuedCompletionStatus` with `ms = math.ceil(timeout * 1e3)`, so the wait
+  ends on a system tick (verified in CPython 3.12 `asyncio/windows_events.py`).
+
+Design points:
+
+- **Scope.** The request is held only around `_converse`. Since Windows 10
+  version 2004 it is per-process, and every begin is matched by an end
+  (verified against the Microsoft docs).
+- **Refusals.** A refused request is never undone, since an unmatched
+  `timeEndPeriod` is a bug of its own, and never fatal.
+- **Reporting.** The outcome is published as `pacing.timer`, which is additive
+  to the JSON, so `SCHEMA_VERSION` is unchanged; baselines do not compare
+  pacing.
+- **Occlusion.** Windows 11 does not guarantee the finer timer to occluded
+  window-owning processes. This is why the field says what was *requested* and
+  the lateness figures stay the evidence.
+
+> ### ✅ REVIEW GATE 11 — PASSED
+>
+> `/code-review high` found 2 issues and no bugs in the timer itself. It
+> checked that every call path runs through `Session.run`, that the request is
+> released on an exception and never undone on a refusal, that the series
+> summary tolerates the new text field, and that the ctypes calling
+> convention is right. Both issues are fixed, with regression tests in
+> `tests/test_review_gate_11.py`:
+>
+> 1. **The tests were stricter than the product.** Two tests demanded `raised`
+>    on any Windows, so on a Windows without `winmm.dll` (e.g. Nano Server),
+>    where `refused` is the designed answer, the suite failed while the code
+>    was right. They now accept either, and still reject `not requested`,
+>    which is the wiring bug they exist to catch. A new test drives a real
+>    call on a simulated winmm-less Windows. This is a test-side finding, so
+>    that test passes against the old product code by design; what changed is
+>    that the suite now allows the outcome.
+> 2. **One constant, three spellings.** `pacer.py` and `metrics.py` repeated
+>    the `"not requested"` literal instead of importing `timer.NOT_REQUESTED`,
+>    so a rename would have left two defaults behind. The spelling test fails
+>    against `614d618`.
+>
+> A first draft of that spelling test also counted a doc comment listing the
+> values, and failed on correct code. It now matches assignments only.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
