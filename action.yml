@@ -38,6 +38,12 @@ inputs:
     description: Path to write this run's summary to.
     required: false
     default: ""
+  junit:
+    description: >-
+      Also write a JUnit XML report to this path, for CI test-report viewers.
+      Leave empty for none. Uploaded with the artifact if under .streamdouble/.
+    required: false
+    default: ""
   version:
     description: Version of streamdouble to install. Defaults to the latest.
     required: false
@@ -84,6 +90,7 @@ runs:
         REPEAT: ${{ inputs.repeat }}
         BASELINE: ${{ inputs.baseline }}
         SAVE_BASELINE: ${{ inputs.save-baseline }}
+        JUNIT: ${{ inputs.junit }}
       run: |
         set -euo pipefail
         mkdir -p .streamdouble
@@ -94,6 +101,7 @@ runs:
         [ -n "$REPEAT" ] && args+=(--repeat "$REPEAT")
         [ -n "$BASELINE" ] && args+=(--baseline "$BASELINE")
         [ -n "$SAVE_BASELINE" ] && args+=(--save-baseline "$SAVE_BASELINE")
+        [ -n "$JUNIT" ] && args+=(--junit "$JUNIT")
 
         # `--json` writes to stdout alone, so it can be captured directly. The
         # exit code is kept and re-raised after the artifact is written: a
