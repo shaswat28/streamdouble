@@ -168,7 +168,7 @@ def test_a_documented_command_runs(document, command, server, tmp_path):
             # what this test checks -- that the command parses and runs is.
             rewritten += [part, "3"]
             skip_next = True
-        elif part in {"--out", "--record-stereo", "--trace", "--save-baseline"}:
+        elif part in {"--out", "--record-stereo", "--trace", "--save-baseline", "--junit"}:
             # Output paths: redirected into tmp_path so a documented command
             # cannot litter the repository when the suite runs. call.jsonl and
             # baseline.json both got committed once before this existed.

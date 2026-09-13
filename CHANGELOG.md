@@ -6,6 +6,10 @@
   file: whether the agent spoke and when, marks and their echoes, clears, gaps
   in the agent's audio, sequence breaks, and malformed or truncated input. It
   opens no socket and reads the file as untrusted input.
+- `--junit PATH` on `call` and `scenario`, including `--repeat` series and
+  baseline comparisons, writes a JUnit XML report. Its `verdict` testcase fails
+  whenever the exit code is non-zero. An allowed unmeasured threshold is
+  skipped, never passed. The GitHub Action gains a `junit` input.
 
 ## 0.2.0 — 2026-09-12
 
