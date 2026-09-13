@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, api, audio, tracereport
+from . import __version__, api, audio, junit, tracereport
 from . import baseline as baseline_module
 from .aggregate import RunSeries
 from .api import (
@@ -297,6 +297,13 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
     gates.add_argument(
         "--max-gap-ms", type=float, metavar="MS",
         help="fail if any silence within the agent's reply exceeds this",
+    )
+    gates.add_argument(
+        "--junit", type=Path, metavar="PATH",
+        help=(
+            "also write a JUnit XML report: one testcase per threshold, "
+            "expectation and protocol check. Never greener than the exit code"
+        ),
     )
     gates.add_argument(
         "--allow-no-audio", action="store_true",
@@ -715,6 +722,25 @@ def _caller_audio(args: argparse.Namespace) -> bytes:
         return b""
 
 
+def _write_junit(args: argparse.Namespace, reports: list, comparison=None, exit_code=None) -> None:
+    """Write --junit if asked. A failure to write is reported, never fatal.
+
+    The same rule as the trace: a diagnostic must not be able to destroy the
+    result of a call that already happened.
+    """
+    path = getattr(args, "junit", None)
+    if not path:
+        return
+    name = Path(args.file).stem if getattr(args, "file", None) else "streamdouble"
+    try:
+        junit.write(
+            path,
+            junit.build(reports, name=name, comparison=comparison, exit_code=exit_code),
+        )
+    except OSError as exc:
+        print(f"streamdouble: could not write {path}: {exc}", file=sys.stderr)
+
+
 def render(args: argparse.Namespace, call_report: CallReport) -> int:
     """Render a finished call and return its exit code.
 
@@ -724,6 +750,8 @@ def render(args: argparse.Namespace, call_report: CallReport) -> int:
     the API would not.
     """
     result = call_report.result
+
+    _write_junit(args, [call_report])
 
     if args.out and not api.save_reply(call_report, args.out):
         # An agent that never spoke leaves no file at all, rather than a
@@ -889,6 +917,8 @@ async def run_series(args: argparse.Namespace, frames: list[bytes], config) -> i
             tolerance_ms=args.tolerance_ms,
             tolerance_ratio=args.tolerance_ratio,
         )
+
+    _write_junit(args, reports, comparison, _series_exit_code(reports, comparison))
 
     if args.save_baseline:
         unmeasured = [m for m in series.metrics if m.median is None]

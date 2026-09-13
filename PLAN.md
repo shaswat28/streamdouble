@@ -639,6 +639,18 @@ called `inspect.py` so it does not shadow the stdlib module.
 > A dry-run re-review found one more: `run_inspect_command`'s docstring still
 > promised exit 0. Fixed. The full suite passes (549).
 
+**Phase 11 status:** built on `roadmap/phase-11-junit`, in
+`src/streamdouble/junit.py` and `tests/test_junit.py`. Two design points:
+
+- A `verdict` testcase fails whenever the exit code is non-zero, so an exit
+  code rule with no testcase of its own still turns the report red. This is
+  mutation-tested.
+- Characters illegal in XML 1.0 are replaced, because `xml.etree` escapes
+  markup but not NUL, and one hostile violation message would otherwise
+  produce a file every CI parser rejects.
+
+**Gate 10 is owed** before merging.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
