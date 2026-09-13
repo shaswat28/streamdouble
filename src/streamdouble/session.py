@@ -62,6 +62,7 @@ from .scenario import (
     Wait,
     WaitFor,
 )
+from .timer import NOT_REQUESTED, high_resolution_timer
 from .trace import Trace
 
 __all__ = [
@@ -331,6 +332,7 @@ class Session:
 
         self.encoder = MediaStreamEncoder(identity)
         self.pacer = Pacer(audio.FRAME_MS / 1000, clock=clock)
+        self._timer_status = NOT_REQUESTED
         self.network = Network(self.config.impairments, seed=self.config.chaos_seed)
         self.result = SessionResult(identity=self.encoder.identity, events=[])
 
@@ -421,7 +423,11 @@ class Session:
         self._record("connected")
 
         try:
-            await self._converse(connection)
+            # Scoped to the conversation, where the pacing happens: a finer
+            # timer costs power and scheduler churn, so it is not held while
+            # connecting or after the call. See timer.py for the measurement.
+            with high_resolution_timer() as self._timer_status:
+                await self._converse(connection)
         except* websockets.ConnectionClosed:
             # The agent hung up mid-call. A real outcome worth reporting, not an
             # error to propagate -- an agent that closes early is exactly the
@@ -442,6 +448,7 @@ class Session:
 
         self.result.audio_received = bytes(self._audio_received)
         self.result.pacing = self.pacer.stats
+        self.result.pacing.timer = self._timer_status
         self.result.network = self.network
         self._record("finished")
         return self.result

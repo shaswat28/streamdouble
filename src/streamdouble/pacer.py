@@ -76,6 +76,9 @@ class PacingStats:
     #: due at the origin itself, so N frames span N-1 intervals of sending time
     #: even though they carry N intervals of audio.
     scheduled_s: float = 0.0
+    #: Which timer produced these figures: "raised", "refused", "not needed",
+    #: or "not requested" for a pacer used outside a session. See ``timer.py``.
+    timer: str = "not requested"
 
     @property
     def mean_lateness_ms(self) -> float:

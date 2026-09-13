@@ -491,12 +491,21 @@ printing it to a tenth of a millisecond, and made the pacer's own lateness
 statistics measure the clock instead of the pacing. Every run reported max
 lateness of exactly 15.0 or 16.0 ms, which is one tick.
 
-With `perf_counter` (100 ns), the two effects separate. Windows' scheduler
-granularity is genuinely coarse — a real run shows max lateness around 15.5 ms —
-but mean lateness is closer to 4 ms, and that distinction was invisible before.
-`streamdouble` publishes both, and derives `measurement_is_reliable` from the
-mean, so one unrelated stall does not condemn a measurement taken thousands of
-frames earlier.
+With `perf_counter` (100 ns), the two effects separate. `streamdouble` publishes
+both max and mean lateness, and derives `measurement_is_reliable` from the mean,
+so one unrelated stall does not condemn a measurement taken thousands of frames
+earlier.
+
+Windows' scheduler is the other half. asyncio waits on the system timer tick,
+15.625 ms by default, so paced frames wake up to a tick late. During a call,
+`streamdouble` asks Windows for a 1 ms timer (`timeBeginPeriod`, released when
+the call ends and scoped to this process). On real calls on the development
+machine, mean lateness fell from 4.3 ms to 1.3 ms and max lateness from 28.8 ms
+to 6.7 ms. Time to first audio did not move, which is the point: the pacing
+got more precise, not the latency more flattering. `pacing.timer` in the JSON
+records the outcome: `raised`, `refused`,
+or `not needed` off Windows. A lateness figure means something only when you
+know which timer produced it.
 
 `PLAN.md` records the build plan, the decisions taken, and what each review gate
 found.

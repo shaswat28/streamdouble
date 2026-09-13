@@ -670,6 +670,52 @@ called `inspect.py` so it does not shadow the stdlib module.
 > 3. **"expect expect clear".** Expectations are already stored as
 >    `Expect.describe()`. The prefix is gone.
 
+**Phase 12 status:** built on `roadmap/phase-12-timer`, in
+`src/streamdouble/timer.py` and `tests/test_timer.py`. It resolves Known issue 3.
+
+Measured twice, on Windows 11 with CPython 3.12.10 and the proactor loop,
+median of 6 alternating runs each way. First a bare pacer loop of 300 frames
+with no socket, before writing any code. Then real calls against the echo
+agent, with the request forced off for the default row:
+
+| Measurement | Timer | Mean late | Max late | Other |
+|---|---|---|---|---|
+| Bare pacer | System default | 8.21 ms | 17.1 ms | 287/300 late |
+| Bare pacer | `timeBeginPeriod(1)` | 1.23 ms | 3.2 ms | 186/300 late |
+| Real call | System default | 4.28 ms | 28.8 ms | first audio 183 ms |
+| Real call | `timeBeginPeriod(1)` | 1.34 ms | 6.7 ms | first audio 182 ms |
+
+What this showed:
+
+- **A first draft over-claimed, and the second measurement caught it.** Docs
+  written from the bare-pacer figures said the 8.21 ms default crossed the 5 ms
+  line in `measurement_is_reliable`, so unmodified runs would flag themselves
+  unreliable. Real calls measured 4.28 ms, under the line and matching Known
+  issue 3's ~4 ms. The bare loop is worse because nothing else wakes the event
+  loop between frames. The docs now cite the real-call figures and say the
+  change sharpens already-reliable figures rather than rescuing unreliable ones.
+- **First audio did not move.** That is the expected result: precise pacing
+  should not shift a latency the pacing was already honest about.
+- **Why asyncio is affected at all.** `IocpProactor._poll` waits in
+  `GetQueuedCompletionStatus` with `ms = math.ceil(timeout * 1e3)`, so the wait
+  ends on a system tick (verified in CPython 3.12 `asyncio/windows_events.py`).
+
+Design points:
+
+- **Scope.** The request is held only around `_converse`. Since Windows 10
+  version 2004 it is per-process, and every begin is matched by an end
+  (verified against the Microsoft docs).
+- **Refusals.** A refused request is never undone, since an unmatched
+  `timeEndPeriod` is a bug of its own, and never fatal.
+- **Reporting.** The outcome is published as `pacing.timer`, which is additive
+  to the JSON, so `SCHEMA_VERSION` is unchanged; baselines do not compare
+  pacing.
+- **Occlusion.** Windows 11 does not guarantee the finer timer to occluded
+  window-owning processes. This is why the field says what was *requested* and
+  the lateness figures stay the evidence.
+
+**Gate 11 is owed** before merging.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
