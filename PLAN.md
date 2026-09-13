@@ -714,7 +714,30 @@ Design points:
   window-owning processes. This is why the field says what was *requested* and
   the lateness figures stay the evidence.
 
-**Gate 11 is owed** before merging.
+> ### ✅ REVIEW GATE 11 — PASSED
+>
+> `/code-review high` found 2 issues and no bugs in the timer itself. It
+> checked that every call path runs through `Session.run`, that the request is
+> released on an exception and never undone on a refusal, that the series
+> summary tolerates the new text field, and that the ctypes calling
+> convention is right. Both issues are fixed, with regression tests in
+> `tests/test_review_gate_11.py`:
+>
+> 1. **The tests were stricter than the product.** Two tests demanded `raised`
+>    on any Windows, so on a Windows without `winmm.dll` (e.g. Nano Server),
+>    where `refused` is the designed answer, the suite failed while the code
+>    was right. They now accept either, and still reject `not requested`,
+>    which is the wiring bug they exist to catch. A new test drives a real
+>    call on a simulated winmm-less Windows. This is a test-side finding, so
+>    that test passes against the old product code by design; what changed is
+>    that the suite now allows the outcome.
+> 2. **One constant, three spellings.** `pacer.py` and `metrics.py` repeated
+>    the `"not requested"` literal instead of importing `timer.NOT_REQUESTED`,
+>    so a rename would have left two defaults behind. The spelling test fails
+>    against `614d618`.
+>
+> A first draft of that spelling test also counted a doc comment listing the
+> values, and failed on correct code. It now matches assignments only.
 
 ### Deliberately dropped, with the reasoning
 

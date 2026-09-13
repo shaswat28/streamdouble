@@ -38,6 +38,7 @@ from typing import Any
 
 from . import audio
 from .session import SessionResult
+from .timer import NOT_REQUESTED
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -169,7 +170,7 @@ class Metrics:
     pacing_mean_lateness_ms: float = 0.0
     #: Which timer the pacing ran on. A lateness figure is only interpretable
     #: alongside it: on Windows the default tick alone accounts for ~8 ms.
-    pacing_timer: str = "not requested"
+    pacing_timer: str = NOT_REQUESTED
 
     @property
     def barge_in_blind_spot_ms(self) -> float | None:

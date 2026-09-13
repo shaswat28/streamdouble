@@ -47,6 +47,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from .timer import NOT_REQUESTED
+
 __all__ = ["Pacer", "PacingStats"]
 
 #: How far behind schedule a frame must be before it is counted as late. One
@@ -78,7 +80,7 @@ class PacingStats:
     scheduled_s: float = 0.0
     #: Which timer produced these figures: "raised", "refused", "not needed",
     #: or "not requested" for a pacer used outside a session. See ``timer.py``.
-    timer: str = "not requested"
+    timer: str = NOT_REQUESTED
 
     @property
     def mean_lateness_ms(self) -> float:

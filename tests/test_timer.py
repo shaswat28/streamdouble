@@ -73,16 +73,24 @@ def test_other_platforms_never_touch_winmm():
     assert fake.begun == [] and fake.ended == []
 
 
+#: What a real Windows machine may legitimately answer. REFUSED is correct on a
+#: Windows without winmm.dll (e.g. Nano Server), and gate 11 found these tests
+#: failing there while the product behaved exactly as designed.
+WINDOWS_OUTCOMES = {timer.RAISED, timer.REFUSED}
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="real winmm exists only on Windows")
-def test_the_real_request_is_granted_on_windows():
+def test_the_real_request_is_answered_on_windows():
     with timer.high_resolution_timer() as status:
-        assert status == timer.RAISED
+        assert status in WINDOWS_OUTCOMES
 
 
 async def test_a_call_reports_which_timer_its_pacing_ran_on(server, speech_8k_path):
     report = await api.call(server, audio_path=speech_8k_path, config=FAST)
 
     published = report.to_dict()["pacing"]["timer"]
-    expected = timer.RAISED if sys.platform == "win32" else timer.NOT_NEEDED
-    assert published == expected
-    assert report.result.pacing.timer == expected
+    # Never "not requested": that would mean the session skipped the request,
+    # which is the wiring this test exists to catch.
+    expected = WINDOWS_OUTCOMES if sys.platform == "win32" else {timer.NOT_NEEDED}
+    assert published in expected
+    assert report.result.pacing.timer == published
