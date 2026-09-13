@@ -10,6 +10,11 @@
   baseline comparisons, writes a JUnit XML report. Its `verdict` testcase fails
   whenever the exit code is non-zero. An allowed unmeasured threshold is
   skipped, never passed. The GitHub Action gains a `junit` input.
+- On Windows, calls request a 1 ms system timer for their duration, released
+  afterwards. On real calls, measured mean pacing lateness fell from 4.3 ms to
+  1.3 ms and max lateness from 28.8 ms to 6.7 ms, with time to first audio
+  unchanged. The JSON's `pacing.timer` records whether the timer was `raised`,
+  `refused`, or `not needed`.
 
 ## 0.2.0 — 2026-09-12
 
