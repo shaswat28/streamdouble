@@ -722,7 +722,9 @@ def _caller_audio(args: argparse.Namespace) -> bytes:
         return b""
 
 
-def _write_junit(args: argparse.Namespace, reports: list, comparison=None, exit_code=None) -> None:
+def _write_junit(
+    args: argparse.Namespace, reports: list, comparison=None, exit_code=None, error=None
+) -> None:
     """Write --junit if asked. A failure to write is reported, never fatal.
 
     The same rule as the trace: a diagnostic must not be able to destroy the
@@ -731,11 +733,14 @@ def _write_junit(args: argparse.Namespace, reports: list, comparison=None, exit_
     path = getattr(args, "junit", None)
     if not path:
         return
+    args.junit_written = True
     name = Path(args.file).stem if getattr(args, "file", None) else "streamdouble"
     try:
         junit.write(
             path,
-            junit.build(reports, name=name, comparison=comparison, exit_code=exit_code),
+            junit.build(
+                reports, name=name, comparison=comparison, exit_code=exit_code, error=error
+            ),
         )
     except OSError as exc:
         print(f"streamdouble: could not write {path}: {exc}", file=sys.stderr)
@@ -938,6 +943,14 @@ async def run_series(args: argparse.Namespace, frames: list[bytes], config) -> i
                 "--allow-unmeasured-baseline if you meant it.",
                 file=sys.stderr,
             )
+            # The report was already written from the calls, which may all
+            # have passed. Rewrite it red: gate 10 found a green report next
+            # to this exit 4.
+            _write_junit(
+                args, reports, comparison, EXIT_USAGE,
+                error=f"baseline {args.save_baseline} not written: "
+                f"{len(unmeasured)} metric(s) never measured",
+            )
             return EXIT_USAGE
         baseline_module.save(args.save_baseline, series, payloads)
 
@@ -1059,6 +1072,25 @@ RUNNERS = {
 }
 
 
+def _junit_for_early_exit(args: argparse.Namespace, code: int) -> None:
+    """A failing report when the command ended before any report was written.
+
+    Connection failures and usage errors return long before a call report
+    exists. Writing nothing left whatever file was already at --junit in
+    place, and on a reused workspace that was the last run's green report,
+    published next to this red job (gate 10).
+    """
+    if code == EXIT_OK or not getattr(args, "junit", None):
+        return
+    if getattr(args, "junit_written", False):
+        return
+    reason = {
+        EXIT_CONNECTION_FAILED: "could not connect to the agent",
+        EXIT_USAGE: "usage error; no call was placed",
+    }.get(code, "no call completed")
+    _write_junit(args, [], error=f"streamdouble exited {code}: {reason}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1066,10 +1098,12 @@ def main(argv: list[str] | None = None) -> int:
     runner = RUNNERS.get(args.command)
     if runner is not None:
         try:
-            return asyncio.run(runner(args))
+            code = asyncio.run(runner(args))
         except KeyboardInterrupt:
             print("\nstreamdouble: interrupted", file=sys.stderr)
-            return EXIT_USAGE
+            code = EXIT_USAGE
+        _junit_for_early_exit(args, code)
+        return code
 
     parser.error(f"unknown command {args.command!r}")
     return EXIT_USAGE  # unreachable; parser.error exits
