@@ -312,6 +312,18 @@ to be sent to someone else; `--trace-secrets` opts out.
 Nothing is written while the call is running. A trace that changed the latency
 it was recording would not be a diagnostic.
 
+To read one back without scrolling through it:
+
+```bash
+streamdouble inspect call.jsonl
+```
+
+It prints whether the agent spoke and when, its marks and which were echoed, any
+`clear`s, gaps in the agent's audio, and anything that arrived malformed or out
+of sequence. Add `--json` for the same data as JSON. An agent that never spoke
+reads as `none`, not `0 ms`. It opens no socket, and it treats the file as
+untrusted, so it is safe to run on a trace someone attached to an issue.
+
 ## Simulate a bad connection
 
 ```bash
