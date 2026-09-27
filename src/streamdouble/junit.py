@@ -95,6 +95,15 @@ def _call_suite(report: CallReport, name: str) -> ET.Element:
     else:
         suite.case("no timeout")
 
+    # Only present when it fails. It is the other way to reach exit 2, and
+    # without a case of its own the one failing testcase would be `verdict`,
+    # which says the run failed but not why.
+    if result.hung_up_silent:
+        suite.case(
+            "agent spoke before hanging up",
+            failure="the agent closed the connection without sending any audio",
+        )
+
     # `what` is Expect.describe(), which already reads "expect clear" or
     # "expect no clear". Prefixing it again gave "expect expect clear" (gate 10).
     for what, passed in result.expectations:
