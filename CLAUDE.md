@@ -72,6 +72,21 @@ python examples/echo_agent.py --port 8000
 streamdouble call ws://localhost:8000/media-stream --audio fixtures/speech_8k.wav --out reply.wav
 ```
 
+Three later additions worth knowing before reading `cli.py`:
+
+- `streamdouble inspect TRACE` summarises a `--trace` file (`tracereport.py`,
+  pure, treats the file as untrusted). Named `tracereport` so it does not
+  shadow the stdlib `inspect`.
+- `--junit PATH` writes a JUnit XML report (`junit.py`). Its promise is that
+  **the XML is never greener than the exit code** -- a `verdict` testcase fails
+  on any non-zero exit, and any early exit that produced no report writes a
+  failing one so a stale green file cannot be published. Gate 10 found both
+  halves of that broken.
+- On Windows a call holds `timeBeginPeriod(1)` for its duration (`timer.py`),
+  because asyncio otherwise wakes on the 15.6 ms system tick. `pacing.timer` in
+  the JSON says `raised`, `refused` or `not needed`, because a lateness figure
+  means nothing without knowing which timer produced it.
+
 The echo agent takes query parameters to misbehave on purpose: `mode=silent`,
 `delay_ms=`, `hangup_after=`, `garbage_after=`, `clear_after=`.
 

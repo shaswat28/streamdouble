@@ -3,13 +3,15 @@
 > A framework-agnostic Twilio Media Streams simulator. Test your voice agent's
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-**Status:** All nine phases complete, gates 1-8 passed. Public on GitHub.
-PyPI is deliberately still at 0.1.0 -- nothing publishes until the roadmap is
-done, and it now is, so a release is the next decision rather than the next
-task. Gate 5's clean-install half is done; what is still owed there is a human
-who is not the author reading the README cold.
+**Status:** Phases 1-12 complete, gates 1-11 passed. Public on GitHub.
+PyPI is at **0.2.0**, released 2026-09-12 from `ab4b99f` (phases 1-9).
+Phases 10-12 (`inspect`, `--junit`, the Windows timer) are on `main` and
+unreleased; `CHANGELOG.md` holds them under `## Unreleased`, and the version
+files still say 0.2.0 because nothing has been bumped. Whether to release them
+is a decision, not a task. Gate 5's clean-install half is done; what is still
+owed there is a human who is not the author reading the README cold.
 See the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap) for
-phases 7-9.
+phases 7-9 and [§3c](#3c-phases-10-12--after-020) for phases 10-12.
 **License:** Apache-2.0
 **Language:** Python 3.11+
 **Name:** `streamdouble` — `dialtone` was taken on PyPI. See [Progress](#progress).
@@ -993,16 +995,18 @@ tests/              512 passing, on Linux + Windows × Python 3.11/3.12/3.13.
 
 ### Next session should
 
-*Updated 2026-09-12, after phases 7-9 and gates 6-8. The roadmap is finished;
-everything below needs either a decision or a person, which is why none of it
-got done by carrying on coding.*
+*Updated 2026-09-27, after phases 10-12 and gates 9-11. Everything below needs
+either a decision or a person, which is why none of it got done by carrying on
+coding.*
 
-1. **Decide about a release.** The cadence decision was "nothing publishes
-   until phase 9", and phase 9 is done -- so this is now a decision rather than
-   a blocker. PyPI is at 0.1.0; `main` is a long way past it. Whatever ships
-   should probably be 0.2.0 or later rather than the 0.1.1 that was merged and
-   never published, since the API surface is substantially bigger than that
-   number suggests.
+1. **Decide about releasing phases 10-12.** PyPI has 0.2.0 (phases 1-9,
+   released 2026-09-12 from `ab4b99f`). Phases 10-12 are on `main` and
+   unreleased. Shipping them means a new version -- 0.3.0 would be the natural
+   number, since they add commands and flags without breaking anything -- set
+   in both `pyproject.toml` and `src/streamdouble/__init__.py` (a test checks
+   they agree), a date on `CHANGELOG.md`'s `## Unreleased` heading, and a
+   manual `release.yml` dispatch with `publish: true`. Irreversible, as ever:
+   a PyPI version can be yanked but never re-uploaded.
 2. **Real recorded speech fixtures.** Unchanged, and still the thing that
    unlocks most: the synthetic fixtures are right for codec tests and useless
    for agent tests, because no STT will transcribe speech-*like* audio. The
