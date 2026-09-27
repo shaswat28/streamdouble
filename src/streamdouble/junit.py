@@ -95,6 +95,19 @@ def _call_suite(report: CallReport, name: str) -> ET.Element:
     else:
         suite.case("no timeout")
 
+    # The other way to reach exit 2. Always present, so the list of testcases
+    # does not depend on the outcome -- a case that exists only when it fails
+    # shows up in CI history as "new, failing" and then "removed", never as
+    # "fixed" (gate 12).
+    if result.closed_before_audio:
+        suite.case(
+            "no close before audio",
+            failure=f"the connection was closed by {result.closed_by} "
+            "before the agent sent any audio",
+        )
+    else:
+        suite.case("no close before audio")
+
     # `what` is Expect.describe(), which already reads "expect clear" or
     # "expect no clear". Prefixing it again gave "expect expect clear" (gate 10).
     for what, passed in result.expectations:

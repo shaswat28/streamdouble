@@ -625,7 +625,11 @@ def report(
     if result.timed_out:
         write()
         write("  the agent sent no audio before the response timeout")
-    if result.closed_early:
+    if result.closed_before_audio:
+        write()
+        write(f"  the connection was closed by {result.closed_by} "
+              "before the agent sent any audio")
+    elif result.closed_early:
         write()
         write("  the agent closed the connection before the call finished")
 

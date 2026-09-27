@@ -741,6 +741,61 @@ Design points:
 > A first draft of that spelling test also counted a doc comment listing the
 > values, and failed on correct code. It now matches assignments only.
 
+**Phase 12b — a hangup is a hangup.** Not planned; found by CI, the first
+run of phases 10-12 on anything but this machine. On Python 3.13 on Windows,
+`test_review_gate_2::test_an_abrupt_hangup_still_reports_cleanly` reported a
+timeout instead of a hangup. The cause predates phase 10: a hangup was noticed
+only when a *later send* failed, and a clean close ends `async for` in the
+receive loop without raising. So:
+
+1. An agent that hung up after the caller's last frame was reported as
+   `timed_out`, after waiting out the whole response timeout on a closed
+   socket. The test raced a 60 ms window; phase 12's faster Windows pacer
+   plausibly narrowed it, though that is not proven.
+2. Worse, and found while fixing the first: an agent that hung up **without
+   ever speaking** exited 0 even when the hangup *was* noticed, because
+   `closed_early` never reached the exit code. README says exit 2 is "the
+   agent never spoke".
+
+The receive loop now records a close it did not cause, the first-audio wait
+and the drain stop on it, and a close before any audio (never on a fork)
+exits 2, is in the JSON, and has its own JUnit testcase. An agent that spoke
+and then hung up mid-caller still exits 0, as before: whether that should
+fail is a contract change, not a fix. Tests in `tests/test_peer_hangup.py`;
+the three regressions fail against `9f64564`.
+
+> ### ✅ REVIEW GATE 12 — PASSED
+>
+> `/code-review high` on phase 12b found 6 issues, one of them a regression
+> the fix itself introduced. All fixed, with regression tests in
+> `tests/test_review_gate_12.py`; all 4 fail on behaviour against `4648e6a`
+> (two first failed only on a missing attribute and were reordered until
+> they failed on the thing they test).
+>
+> 1. **Unreached expectations vanished.** The new close detection stopped the
+>    step loop, and `expect` steps after that point were never evaluated or
+>    listed -- so an agent that spoke, failed an expectation and hung up
+>    exited 0. The same was already true of a hangup mid-step. Unreached
+>    expectations are now recorded as failed, "not reached".
+> 2. **The library's closes were blamed on the agent.** A frame over
+>    `MAX_INBOUND_FRAME_BYTES` makes websockets close with 1009 itself. It is
+>    now `closed_by: streamdouble`, told apart by which side sent the first
+>    close frame, with the code in a warning.
+> 3. **A scenario's `hangup` still sat out the response timeout** on the
+>    socket it had just closed.
+> 4. **Three overlapping close flags** (`_hung_up`, `_caller_closed`,
+>    `_peer_closed`). Now one `_socket_closed` event and one cause, decided
+>    once by whoever sees the close first; that reshaping is what fixed 2
+>    and 3. `hung_up_silent` became `closed_by` + `closed_before_audio`
+>    before it was ever released.
+> 5. **A JUnit case that existed only when failing**, which CI history can
+>    never show as fixed. `no close before audio` is now always present.
+> 6. **No test for 1** -- the regression passed the full suite. Covered now.
+>
+> One judgement call: a scenario that hangs up before the agent speaks still
+> exits 2, as it did via the timeout. Not waiting for the timeout must not be
+> what turns it green.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
