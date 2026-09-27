@@ -17,11 +17,16 @@
   `refused`, or `not needed`.
 - **Fixed:** an agent that hangs up without ever sending audio now exits 2,
   "the agent never spoke", as documented. It used to exit 0. The JSON gains
-  `hung_up_silent`, and `--junit` a failing `agent spoke before hanging up`
-  testcase.
+  `closed_by` (`agent`, `caller`, or `streamdouble` when the websockets
+  library closed it, e.g. for an oversized frame) and `closed_before_audio`;
+  `--junit` gains a `no close before audio` testcase.
 - **Fixed:** a hangup that arrives after the caller's last frame is reported as
   a hangup. It used to be reported as a response timeout, after waiting the
-  whole timeout out on a closed socket.
+  whole timeout out on a closed socket. A scenario's own `hangup` no longer
+  waits it out either.
+- **Fixed:** a scenario `expect` step that the call ended before reaching is
+  reported as failed ("not reached"). It used to be left out, so an agent that
+  hung up before a failing expectation could exit 0.
 
 ## 0.2.0 — 2026-09-12
 

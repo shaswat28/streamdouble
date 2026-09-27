@@ -757,13 +757,44 @@ receive loop without raising. So:
    `closed_early` never reached the exit code. README says exit 2 is "the
    agent never spoke".
 
-The receive loop now records a close it did not cause (our own `_closing`
-and a scenario's `hangup` step are excluded), the first-audio wait and the
-drain stop on it, and a new `hung_up_silent` (never on a fork) exits 2, is in
-the JSON, and fails its own JUnit testcase. An agent that spoke and then hung
-up mid-caller still exits 0, as before: whether that should fail is a
-contract change, not a fix. Tests in `tests/test_peer_hangup.py`; the three
-regressions fail against `9f64564`.
+The receive loop now records a close it did not cause, the first-audio wait
+and the drain stop on it, and a close before any audio (never on a fork)
+exits 2, is in the JSON, and has its own JUnit testcase. An agent that spoke
+and then hung up mid-caller still exits 0, as before: whether that should
+fail is a contract change, not a fix. Tests in `tests/test_peer_hangup.py`;
+the three regressions fail against `9f64564`.
+
+> ### ✅ REVIEW GATE 12 — PASSED
+>
+> `/code-review high` on phase 12b found 6 issues, one of them a regression
+> the fix itself introduced. All fixed, with regression tests in
+> `tests/test_review_gate_12.py`; all 4 fail on behaviour against `4648e6a`
+> (two first failed only on a missing attribute and were reordered until
+> they failed on the thing they test).
+>
+> 1. **Unreached expectations vanished.** The new close detection stopped the
+>    step loop, and `expect` steps after that point were never evaluated or
+>    listed -- so an agent that spoke, failed an expectation and hung up
+>    exited 0. The same was already true of a hangup mid-step. Unreached
+>    expectations are now recorded as failed, "not reached".
+> 2. **The library's closes were blamed on the agent.** A frame over
+>    `MAX_INBOUND_FRAME_BYTES` makes websockets close with 1009 itself. It is
+>    now `closed_by: streamdouble`, told apart by which side sent the first
+>    close frame, with the code in a warning.
+> 3. **A scenario's `hangup` still sat out the response timeout** on the
+>    socket it had just closed.
+> 4. **Three overlapping close flags** (`_hung_up`, `_caller_closed`,
+>    `_peer_closed`). Now one `_socket_closed` event and one cause, decided
+>    once by whoever sees the close first; that reshaping is what fixed 2
+>    and 3. `hung_up_silent` became `closed_by` + `closed_before_audio`
+>    before it was ever released.
+> 5. **A JUnit case that existed only when failing**, which CI history can
+>    never show as fixed. `no close before audio` is now always present.
+> 6. **No test for 1** -- the regression passed the full suite. Covered now.
+>
+> One judgement call: a scenario that hangs up before the agent speaks still
+> exits 2, as it did via the timeout. Not waiting for the timeout must not be
+> what turns it green.
 
 ### Deliberately dropped, with the reasoning
 

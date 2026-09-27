@@ -160,10 +160,11 @@ class Metrics:
     unknown_events: list[str] = field(default_factory=list)
     timed_out: bool = False
     closed_early: bool = False
-    #: The agent hung up before sending any audio. Additive to the JSON, so
-    #: SCHEMA_VERSION is unchanged; it explains an exit code of 2 when
-    #: ``timed_out`` is false.
-    hung_up_silent: bool = False
+    #: See ``SessionResult.closed_by`` and ``closed_before_audio``. Additive
+    #: to the JSON, so SCHEMA_VERSION is unchanged; together they explain an
+    #: exit code of 2 when ``timed_out`` is false.
+    closed_by: str | None = None
+    closed_before_audio: bool = False
 
     # --- the tool's own honesty --------------------------------------------
     #: How far pacing diverged from the schedule. Reported because it bounds how
@@ -248,7 +249,8 @@ class Metrics:
             "unknown_events": list(self.unknown_events),
             "timed_out": self.timed_out,
             "closed_early": self.closed_early,
-            "hung_up_silent": self.hung_up_silent,
+            "closed_by": self.closed_by,
+            "closed_before_audio": self.closed_before_audio,
             "pacing": {
                 "drift_ms": _round(self.pacing_drift_ms),
                 "late_frames": self.pacing_late_frames,
@@ -290,7 +292,8 @@ def compute(result: SessionResult) -> Metrics:
         unknown_events=sorted(set(result.unknown_events)),
         timed_out=result.timed_out,
         closed_early=result.closed_early,
-        hung_up_silent=result.hung_up_silent,
+        closed_by=result.closed_by,
+        closed_before_audio=result.closed_before_audio,
         pacing_drift_ms=result.pacing.drift_ms,
         pacing_late_frames=result.pacing.late_frames,
         pacing_max_lateness_ms=result.pacing.max_lateness_ms,

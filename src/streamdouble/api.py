@@ -152,8 +152,8 @@ class CallReport:
         if self.result.violations:
             return EXIT_PROTOCOL_VIOLATION
         # Both are "the agent never spoke", which is what EXIT_TIMEOUT means in
-        # the README. A silent hangup used to fall through to EXIT_OK.
-        if self.result.timed_out or self.result.hung_up_silent:
+        # the README. A close before any audio used to fall through to EXIT_OK.
+        if self.result.timed_out or self.result.closed_before_audio:
             return EXIT_TIMEOUT
         if self.result.failed_expectations:
             return EXIT_ASSERTION_FAILED
