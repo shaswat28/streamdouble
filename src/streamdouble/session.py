@@ -202,6 +202,11 @@ class SessionResult:
     warnings: list[str] = field(default_factory=list)
     #: Set when the agent closed the socket before the call was finished.
     closed_early: bool = False
+    #: Set when the agent closed the socket without having sent any audio, on a
+    #: call where audio was expected (never on a fork). The same outcome as
+    #: ``timed_out`` for the exit code -- the agent never spoke -- but kept
+    #: apart because "it hung up" and "it went quiet" point at different bugs.
+    hung_up_silent: bool = False
 
     @property
     def audio_duration_s(self) -> float:
@@ -347,6 +352,12 @@ class Session:
         self._outbound_cursor = 0
 
         self._closing = asyncio.Event()
+        # Set when the *agent* closes the socket. Waiters that would otherwise
+        # sit out a timeout on a dead socket -- the wait for first audio, the
+        # drain -- watch it. A scenario's own `hangup` step closes from our
+        # side, so it sets _caller_closed first and is not mistaken for this.
+        self._peer_closed = asyncio.Event()
+        self._caller_closed = False
         self._first_audio = asyncio.Event()
         self._last_audio_at: float | None = None
 
@@ -437,8 +448,7 @@ class Session:
             # its children raise in an ExceptionGroup. A plain except clause
             # here would not match, and the close would surface as an unhandled
             # ExceptionGroup instead of a reported outcome.
-            self.result.closed_early = True
-            self._record("closed_by_peer")
+            self._note_peer_closed()
         finally:
             # Explicit close rather than `async with connection`: the object
             # returned by awaiting websockets.connect() is not an async context
@@ -586,6 +596,7 @@ class Session:
 
         elif isinstance(step, Hangup):
             self._hung_up = True
+            self._caller_closed = True
             self._record("caller_hung_up")
             await connection.close()
 
@@ -740,9 +751,35 @@ class Session:
             async for message in connection:
                 self._handle_message(message)
         except websockets.ConnectionClosed:
-            # Normal termination: either we closed, or the agent did. Which of
-            # the two is recorded by the caller, which knows the difference.
             pass
+
+        # Either we closed or the agent did, and the loop ends the same way for
+        # both -- a clean close ends `async for` without raising at all. Only
+        # our own flags can tell them apart.
+        #
+        # This used to be left to a later send failing, which only happens if
+        # there *is* a later send. An agent that hung up after the caller's
+        # last frame was never noticed: the session sat out the response
+        # timeout on a closed socket and reported "the agent sent no audio",
+        # and one that hung up mid-call without speaking exited 0. CI found the
+        # first as a race in test_review_gate_2 on a slow Windows runner.
+        if not self._closing.is_set() and not self._caller_closed:
+            self._note_peer_closed()
+
+    def _note_peer_closed(self) -> None:
+        """Record that the agent closed the socket. Idempotent.
+
+        Reached from the receive loop and from ``run``'s handler for a failed
+        send; whichever sees the close first records it.
+        """
+        if self._peer_closed.is_set():
+            return
+        self._peer_closed.set()
+        self._hung_up = True
+        self.result.closed_early = True
+        if not self.config.fork and not self._first_audio.is_set():
+            self.result.hung_up_silent = True
+        self._record("closed_by_peer")
 
     async def _send(self, connection: Any, frame: dict[str, Any]) -> None:
         """Serialise, trace and send one frame.
@@ -956,6 +993,9 @@ class Session:
         * The agent never spoke -> ``timed_out``.
         * The agent spoke and went quiet -> a normal completed turn.
         * The agent never stopped -> the drain cap, so CI cannot hang.
+
+        And whenever the agent hangs up, at once -- ``closed_early``, plus
+        ``hung_up_silent`` if it never spoke.
         """
         if not await self._await_first_audio():
             return
@@ -963,7 +1003,7 @@ class Session:
         drain_started = self.clock()
 
         while self.clock() - drain_started < self.config.max_drain_s:
-            if self._closing.is_set():
+            if self._closing.is_set() or self._peer_closed.is_set():
                 return
             if self.config.stop_after_first_mark and self._first_mark_echoed.is_set():
                 self._record("drain_complete", reason="first_mark_echoed")
@@ -994,15 +1034,31 @@ class Session:
             return True
         if self._first_audio.is_set():
             return True
-        try:
-            await asyncio.wait_for(
-                self._first_audio.wait(), timeout=self.config.response_timeout_s
-            )
-        except TimeoutError:
-            self.result.timed_out = True
-            self._record("response_timeout", waited=self.config.response_timeout_s)
+        if self._peer_closed.is_set():
             return False
-        return True
+
+        # Race the audio against the agent hanging up. A closed socket will
+        # never deliver audio, so waiting out the timeout on one only delays the
+        # verdict -- and then misreports a hangup as a timeout.
+        audio = asyncio.ensure_future(self._first_audio.wait())
+        closed = asyncio.ensure_future(self._peer_closed.wait())
+        try:
+            await asyncio.wait(
+                (audio, closed),
+                timeout=self.config.response_timeout_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            audio.cancel()
+            closed.cancel()
+
+        if self._first_audio.is_set():
+            return True
+        if self._peer_closed.is_set():
+            return False
+        self.result.timed_out = True
+        self._record("response_timeout", waited=self.config.response_timeout_s)
+        return False
 
 
 def _start_kwargs(config: SessionConfig) -> dict[str, Any]:

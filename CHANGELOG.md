@@ -15,6 +15,13 @@
   1.3 ms and max lateness from 28.8 ms to 6.7 ms, with time to first audio
   unchanged. The JSON's `pacing.timer` records whether the timer was `raised`,
   `refused`, or `not needed`.
+- **Fixed:** an agent that hangs up without ever sending audio now exits 2,
+  "the agent never spoke", as documented. It used to exit 0. The JSON gains
+  `hung_up_silent`, and `--junit` a failing `agent spoke before hanging up`
+  testcase.
+- **Fixed:** a hangup that arrives after the caller's last frame is reported as
+  a hangup. It used to be reported as a response timeout, after waiting the
+  whole timeout out on a closed socket.
 
 ## 0.2.0 — 2026-09-12
 

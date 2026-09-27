@@ -741,6 +741,30 @@ Design points:
 > A first draft of that spelling test also counted a doc comment listing the
 > values, and failed on correct code. It now matches assignments only.
 
+**Phase 12b — a hangup is a hangup.** Not planned; found by CI, the first
+run of phases 10-12 on anything but this machine. On Python 3.13 on Windows,
+`test_review_gate_2::test_an_abrupt_hangup_still_reports_cleanly` reported a
+timeout instead of a hangup. The cause predates phase 10: a hangup was noticed
+only when a *later send* failed, and a clean close ends `async for` in the
+receive loop without raising. So:
+
+1. An agent that hung up after the caller's last frame was reported as
+   `timed_out`, after waiting out the whole response timeout on a closed
+   socket. The test raced a 60 ms window; phase 12's faster Windows pacer
+   plausibly narrowed it, though that is not proven.
+2. Worse, and found while fixing the first: an agent that hung up **without
+   ever speaking** exited 0 even when the hangup *was* noticed, because
+   `closed_early` never reached the exit code. README says exit 2 is "the
+   agent never spoke".
+
+The receive loop now records a close it did not cause (our own `_closing`
+and a scenario's `hangup` step are excluded), the first-audio wait and the
+drain stop on it, and a new `hung_up_silent` (never on a fork) exits 2, is in
+the JSON, and fails its own JUnit testcase. An agent that spoke and then hung
+up mid-caller still exits 0, as before: whether that should fail is a
+contract change, not a fix. Tests in `tests/test_peer_hangup.py`; the three
+regressions fail against `9f64564`.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
