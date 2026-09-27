@@ -15,7 +15,10 @@ The three regression tests fail against 9f64564 on behaviour. They use
 ``hangup_after=`` at or past the number of frames sent, so the close lands
 after the last send and nothing depends on a runner being slow. The three
 guards at the end check the fix does not overreach; against 9f64564 they fail
-only because ``hung_up_silent`` did not exist, which proves nothing.
+only because ``closed_by`` did not exist, which proves nothing.
+
+Gate 12 reshaped the fix (``hung_up_silent`` became ``closed_by`` plus
+``closed_before_audio``); its own findings are in test_review_gate_12.py.
 """
 
 from __future__ import annotations
@@ -59,7 +62,8 @@ async def test_a_hangup_after_the_last_frame_is_a_hangup_not_a_timeout(server, f
 
     assert result.closed_early
     assert not result.timed_out
-    assert result.hung_up_silent
+    assert result.closed_by == "agent"
+    assert result.closed_before_audio
 
 
 @pytest.mark.timeout(30)
@@ -92,7 +96,7 @@ def test_an_agent_that_hangs_up_without_speaking_does_not_exit_0(server, tmp_pat
         for case in ET.parse(report).getroot().iter("testcase")
         if case.find("failure") is not None
     ]
-    assert "agent spoke before hanging up" in failed
+    assert "no close before audio" in failed
 
 
 # Guards: not regressions, but the two ways the fix could overreach ----------
@@ -119,7 +123,7 @@ async def test_the_callers_own_hangup_step_is_not_the_agent_closing(server, tmp_
     result = await Session(server, scenario=load_scenario(path), config=config()).run()
 
     assert not result.closed_early
-    assert not result.hung_up_silent
+    assert result.closed_by == "caller"
 
 
 @pytest.mark.timeout(30)
@@ -143,5 +147,5 @@ async def test_a_fork_consumer_closing_is_never_a_silent_hangup(frames):
         await server.wait_closed()
 
     assert result.closed_early
-    assert not result.hung_up_silent
+    assert not result.closed_before_audio
     assert not result.timed_out

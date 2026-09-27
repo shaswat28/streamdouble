@@ -120,6 +120,12 @@ MAX_REPORTED_ISSUES = 1000
 #: max_drain_s entirely.
 STOP_SEND_TIMEOUT_S = 5.0
 
+#: Who ended the connection early, for ``SessionResult.closed_by``. Part of the
+#: JSON, so the spellings are a contract.
+CLOSED_BY_AGENT = "agent"
+CLOSED_BY_CALLER = "caller"
+CLOSED_BY_STREAMDOUBLE = "streamdouble"
+
 
 @dataclass(frozen=True)
 class SessionEvent:
@@ -202,11 +208,17 @@ class SessionResult:
     warnings: list[str] = field(default_factory=list)
     #: Set when the agent closed the socket before the call was finished.
     closed_early: bool = False
-    #: Set when the agent closed the socket without having sent any audio, on a
-    #: call where audio was expected (never on a fork). The same outcome as
-    #: ``timed_out`` for the exit code -- the agent never spoke -- but kept
-    #: apart because "it hung up" and "it went quiet" point at different bugs.
-    hung_up_silent: bool = False
+    #: Who closed the connection before the call finished, if anyone: one of
+    #: the ``CLOSED_BY_*`` values. ``None`` for a call that ran to its end.
+    #: ``streamdouble`` means the websockets library closed it -- a frame over
+    #: ``MAX_INBOUND_FRAME_BYTES``, or a keepalive timeout -- and is *not* the
+    #: agent hanging up, though the agent usually caused it.
+    closed_by: str | None = None
+    #: Set when the connection closed, by anyone, before the agent sent any
+    #: audio, on a call where audio was expected (never on a fork). Exits 2
+    #: like ``timed_out`` -- the agent never spoke -- but kept apart, because
+    #: "it hung up" and "it went quiet" point at different bugs.
+    closed_before_audio: bool = False
 
     @property
     def audio_duration_s(self) -> float:
@@ -352,12 +364,11 @@ class Session:
         self._outbound_cursor = 0
 
         self._closing = asyncio.Event()
-        # Set when the *agent* closes the socket. Waiters that would otherwise
-        # sit out a timeout on a dead socket -- the wait for first audio, the
-        # drain -- watch it. A scenario's own `hangup` step closes from our
-        # side, so it sets _caller_closed first and is not mistaken for this.
-        self._peer_closed = asyncio.Event()
-        self._caller_closed = False
+        # Set when the socket closes before the call is finished, by anyone.
+        # Waiters that would otherwise sit out a timeout on a dead socket --
+        # the wait for first audio, the drain -- watch it. Who closed it is
+        # decided once, by whoever sees the close first; see _note_close.
+        self._socket_closed = asyncio.Event()
         self._first_audio = asyncio.Event()
         self._last_audio_at: float | None = None
 
@@ -439,16 +450,18 @@ class Session:
             # connecting or after the call. See timer.py for the measurement.
             with high_resolution_timer() as self._timer_status:
                 await self._converse(connection)
-        except* websockets.ConnectionClosed:
-            # The agent hung up mid-call. A real outcome worth reporting, not an
-            # error to propagate -- an agent that closes early is exactly the
-            # kind of bug this tool exists to catch.
+        except* websockets.ConnectionClosed as group:
+            # The connection closed mid-call, seen by a send failing. A real
+            # outcome worth reporting, not an error to propagate -- an agent
+            # that closes early is exactly the kind of bug this tool exists to
+            # catch.
             #
             # except* because _converse runs a TaskGroup, which wraps whatever
             # its children raise in an ExceptionGroup. A plain except clause
             # here would not match, and the close would surface as an unhandled
             # ExceptionGroup instead of a reported outcome.
-            self._note_peer_closed()
+            closed = group.exceptions[0]
+            self._note_close(_close_cause(closed), closed)
         finally:
             # Explicit close rather than `async with connection`: the object
             # returned by awaiting websockets.connect() is not an async context
@@ -523,13 +536,19 @@ class Session:
         self._call_deadline = self.result.started_at + self.config.max_call_s
 
         steps = self.scenario.steps if self.scenario else [Say(Path("-"), self.frames)]
-        for step in steps:
-            if self._hung_up:
-                break
-            if self.clock() >= self._call_deadline:
-                self._record("max_call_reached", limit_s=self.config.max_call_s)
-                break
-            await self._run_step(connection, step)
+        done = 0
+        try:
+            for step in steps:
+                if self._hung_up:
+                    break
+                if self.clock() >= self._call_deadline:
+                    self._record("max_call_reached", limit_s=self.config.max_call_s)
+                    break
+                await self._run_step(connection, step)
+                done += 1
+        finally:
+            # Whether the loop broke or a send raised, the rest never ran.
+            self._fail_unreached(steps[done:])
 
         await self._drain_outbound_track(connection)
 
@@ -595,10 +614,26 @@ class Session:
             self._check_expectation(step)
 
         elif isinstance(step, Hangup):
-            self._hung_up = True
-            self._caller_closed = True
             self._record("caller_hung_up")
+            # Before the close, so the receive loop, which sees the same close,
+            # finds the cause already decided and does not blame the agent.
+            self._note_close(CLOSED_BY_CALLER)
             await connection.close()
+
+    def _fail_unreached(self, steps: Sequence[Step]) -> None:
+        """Record every expectation the call ended before reaching as failed.
+
+        Leaving them out made a run greener than it was: a scenario whose agent
+        spoke, failed an ``expect``, and hung up before the ``expect`` step
+        came round exited 0, because the expectation that would have failed
+        was never evaluated and so never listed. Gate 12. Not evaluated is not
+        passed, the same rule as a ``None`` metric.
+        """
+        for step in steps:
+            if isinstance(step, Expect):
+                what = f"{step.describe()} (not reached: the call ended first)"
+                self.result.expectations.append((what, False))
+                self._record("expectation", what=what, passed=False)
 
     @property
     def _carries_outbound(self) -> bool:
@@ -747,39 +782,48 @@ class Session:
         Runs for the whole call, concurrently with sending, because an agent may
         start replying before the caller has stopped talking.
         """
+        closed: websockets.ConnectionClosed | None = None
         try:
             async for message in connection:
                 self._handle_message(message)
-        except websockets.ConnectionClosed:
-            pass
+        except websockets.ConnectionClosed as exc:
+            closed = exc
 
-        # Either we closed or the agent did, and the loop ends the same way for
-        # both -- a clean close ends `async for` without raising at all. Only
-        # our own flags can tell them apart.
-        #
         # This used to be left to a later send failing, which only happens if
         # there *is* a later send. An agent that hung up after the caller's
         # last frame was never noticed: the session sat out the response
         # timeout on a closed socket and reported "the agent sent no audio",
         # and one that hung up mid-call without speaking exited 0. CI found the
         # first as a race in test_review_gate_2 on a slow Windows runner.
-        if not self._closing.is_set() and not self._caller_closed:
-            self._note_peer_closed()
+        #
+        # Our own end-of-call close ends the loop too, and is not an outcome.
+        if not self._closing.is_set():
+            self._note_close(_close_cause(closed), closed)
 
-    def _note_peer_closed(self) -> None:
-        """Record that the agent closed the socket. Idempotent.
+    def _note_close(
+        self, cause: str, closed: websockets.ConnectionClosed | None = None
+    ) -> None:
+        """Record that the connection closed before the call finished.
 
-        Reached from the receive loop and from ``run``'s handler for a failed
-        send; whichever sees the close first records it.
+        Idempotent: the receive loop, a failed send and a scenario's ``hangup``
+        can all see the same close, and the first to see it decides whose it
+        was. The ``hangup`` step calls this *before* closing, which is how its
+        close is never mistaken for the agent's.
         """
-        if self._peer_closed.is_set():
+        if self._socket_closed.is_set():
             return
-        self._peer_closed.set()
+        self._socket_closed.set()
         self._hung_up = True
-        self.result.closed_early = True
+        self.result.closed_by = cause
+        self.result.closed_early = cause == CLOSED_BY_AGENT
         if not self.config.fork and not self._first_audio.is_set():
-            self.result.hung_up_silent = True
-        self._record("closed_by_peer")
+            self.result.closed_before_audio = True
+        if cause == CLOSED_BY_STREAMDOUBLE:
+            self.result.warnings.append(
+                "streamdouble closed the connection, not the agent: "
+                + _describe_close(closed)
+            )
+        self._record("connection_closed", by=cause)
 
     async def _send(self, connection: Any, frame: dict[str, Any]) -> None:
         """Serialise, trace and send one frame.
@@ -994,8 +1038,8 @@ class Session:
         * The agent spoke and went quiet -> a normal completed turn.
         * The agent never stopped -> the drain cap, so CI cannot hang.
 
-        And whenever the agent hangs up, at once -- ``closed_early``, plus
-        ``hung_up_silent`` if it never spoke.
+        And whenever the connection closes early, at once -- see
+        ``closed_by`` and ``closed_before_audio``.
         """
         if not await self._await_first_audio():
             return
@@ -1003,7 +1047,7 @@ class Session:
         drain_started = self.clock()
 
         while self.clock() - drain_started < self.config.max_drain_s:
-            if self._closing.is_set() or self._peer_closed.is_set():
+            if self._closing.is_set() or self._socket_closed.is_set():
                 return
             if self.config.stop_after_first_mark and self._first_mark_echoed.is_set():
                 self._record("drain_complete", reason="first_mark_echoed")
@@ -1034,14 +1078,14 @@ class Session:
             return True
         if self._first_audio.is_set():
             return True
-        if self._peer_closed.is_set():
+        if self._socket_closed.is_set():
             return False
 
-        # Race the audio against the agent hanging up. A closed socket will
+        # Race the audio against the connection closing. A closed socket will
         # never deliver audio, so waiting out the timeout on one only delays the
         # verdict -- and then misreports a hangup as a timeout.
         audio = asyncio.ensure_future(self._first_audio.wait())
-        closed = asyncio.ensure_future(self._peer_closed.wait())
+        closed = asyncio.ensure_future(self._socket_closed.wait())
         try:
             await asyncio.wait(
                 (audio, closed),
@@ -1054,11 +1098,33 @@ class Session:
 
         if self._first_audio.is_set():
             return True
-        if self._peer_closed.is_set():
+        if self._socket_closed.is_set():
             return False
         self.result.timed_out = True
         self._record("response_timeout", waited=self.config.response_timeout_s)
         return False
+
+
+def _close_cause(closed: websockets.ConnectionClosed | None) -> str:
+    """Whose close this was, for a close the session did not start itself.
+
+    If our side sent the first close frame, the websockets library started it
+    -- a frame over ``max_size`` (1009) or a keepalive timeout (1011) -- since
+    the session's own closes are flagged before they happen. Anything else,
+    including a clean close that ended ``async for`` without raising and a TCP
+    drop with no close frame at all, is the agent.
+    """
+    if closed is not None and closed.sent is not None and not closed.rcvd_then_sent:
+        return CLOSED_BY_STREAMDOUBLE
+    return CLOSED_BY_AGENT
+
+
+def _describe_close(closed: websockets.ConnectionClosed | None) -> str:
+    frame = closed.sent if closed is not None else None
+    if frame is None:
+        return "no close frame"
+    reason = f" ({frame.reason})" if frame.reason else ""
+    return f"code {frame.code}{reason}"
 
 
 def _start_kwargs(config: SessionConfig) -> dict[str, Any]:
