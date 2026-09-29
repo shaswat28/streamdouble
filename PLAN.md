@@ -3,12 +3,10 @@
 > A framework-agnostic Twilio Media Streams simulator. Test your voice agent's
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
-**Status:** Phases 1-12 complete, gates 1-11 passed. Public on GitHub.
-PyPI is at **0.2.0**, released 2026-09-12 from `ab4b99f` (phases 1-9).
-Phases 10-12 (`inspect`, `--junit`, the Windows timer) are on `main` and
-unreleased; `CHANGELOG.md` holds them under `## Unreleased`, and the version
-files still say 0.2.0 because nothing has been bumped. Whether to release them
-is a decision, not a task. Gate 5's clean-install half is done; what is still
+**Status:** Phases 1-12c complete, gates 1-13 passed. Public on GitHub.
+**0.3.0** (phases 10-12 and gates 9-13) is prepared on `main`; PyPI has
+0.2.0 (phases 1-9, `ab4b99f`) until the Release workflow is dispatched with
+`publish: true`. Gate 5's clean-install half is done; what is still
 owed there is a human who is not the author reading the README cold.
 See the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap) for
 phases 7-9 and [§3c](#3c-phases-10-12--after-020) for phases 10-12.
