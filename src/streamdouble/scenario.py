@@ -332,6 +332,13 @@ def _parse_say(value: Any, position: str, base: Path) -> Say:
     return Say(path=path, frames=frames)
 
 
+#: Longest a single step may last. A day is far past any real call -- and past
+#: max_call_s, which ends the call first -- so anything longer is a typo, and
+#: an unbounded one is a crash: `wait: 1e308` overflowed converting seconds to
+#: frames mid-call even after .inf was refused (gate 13).
+MAX_STEP_S = 24 * 60 * 60
+
+
 def _seconds(value: Any, position: str, what: str) -> float:
     """A positive, finite number of seconds, or a ScenarioError.
 
@@ -345,6 +352,10 @@ def _seconds(value: Any, position: str, what: str) -> float:
         raise ScenarioError(f"{position}{what} takes a number of seconds")
     if not math.isfinite(value) or value <= 0:
         raise ScenarioError(f"{position}{what} must be a positive number, got {value}")
+    if value > MAX_STEP_S:
+        raise ScenarioError(
+            f"{position}{what} of {value}s is longer than a day ({MAX_STEP_S}s)"
+        )
     return float(value)
 
 

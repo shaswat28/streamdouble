@@ -830,6 +830,26 @@ needs at least 3 runs, so 3 is already the floor), and a lazy-import rework so
 `inspect` starts faster (~0.3 s saved on one command, at the cost of moving
 imports that `cli`'s re-exports and callers depend on).
 
+> ### ✅ REVIEW GATE 13 — PASSED
+>
+> `/code-review high` on phase 12c found 5 issues. All fixed; tests in
+> `tests/test_review_gate_13.py`, and every regression test fails against
+> `bd0a92f`.
+>
+> 1. **The NaN/inf fix was incomplete.** A huge *finite* wait (`1e308`)
+>    still overflowed converting seconds to frames mid-call, and `1e10` would
+>    have tried to allocate 5e11 frames. A step is now capped at a day.
+> 2. **The protocol docstrings still described one shared timestamp clock**,
+>    including the "where the documentation stops" list that exists for
+>    whoever settles fork mode against a real consumer. Both halves of the
+>    two-track reading are now recorded there as inferences.
+> 3. `wait` built a list of every silence frame up front; now lazy.
+> 4. **Fork wire order depended on impairments.** With `--latency-ms` the
+>    agent's frame went first in every tick, otherwise second. Now always
+>    first.
+> 5. `stream_time_ms` had quietly come to mean the inbound track only; it is
+>    the furthest any track has reached again.
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is

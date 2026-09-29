@@ -34,14 +34,16 @@
 - **Fixed:** on a two-track fork, each track's `media.timestamp` now advances
   20 ms per frame. The tracks shared one clock, so each ran at 40 ms per frame.
   `chunk` and `sequenceNumber` are still shared; the Twilio docs do not say,
-  and that reading is unchanged (see `protocol.py`).
+  and that reading is unchanged (see `protocol.py`). Within each 20 ms tick
+  the agent's frame is now sent before the caller's.
 - **Fixed:** on a two-track fork with `--loss` or `--jitter-ms`, the agent's
   track is no longer dropped or delayed along with the caller's. Impairments
   model the caller's leg only.
 - **Fixed:** malformed scenario steps are refused before the call:
   `wait_for` with a list or mapping raised a TypeError, and `wait: .nan` or
-  `.inf` passed validation and crashed mid-call. `timeout: true` is refused
-  rather than read as one second.
+  `.inf` passed validation and crashed mid-call, as did a huge finite one;
+  a step now lasts at most a day. `timeout: true` is refused rather than read
+  as one second.
 - **Fixed:** `streamdouble inspect` measures times from the first frame in the
   trace, parseable or not, rather than the first well-formed one.
 
