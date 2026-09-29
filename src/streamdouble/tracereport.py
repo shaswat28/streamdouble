@@ -226,8 +226,11 @@ def summarise(lines: Iterable[str | bytes], *, gap_ms: float = DEFAULT_GAP_MS) -
             summary.malformed_lines += 1
             continue
 
-        summary.records += 1
         direction = record.get("dir")
+        if direction not in ("in", "out", "note"):
+            summary.malformed_lines += 1
+            continue
+        summary.records += 1
 
         if direction == "note":
             if record.get("truncated") is True:
@@ -236,10 +239,13 @@ def summarise(lines: Iterable[str | bytes], *, gap_ms: float = DEFAULT_GAP_MS) -
                     "dropped": _sequence(record.get("dropped")),
                 }
             continue
-        if direction not in ("in", "out"):
-            summary.malformed_lines += 1
-            summary.records -= 1
-            continue
+        # The origin is the first frame of either direction, parseable or
+        # not. Taking it after the `unparseable` skip below measured every
+        # time from the first *well-formed* frame, so garbage at the start of
+        # a call shifted the whole timeline and hid how early it came.
+        t = _number(record.get("t"))
+        if t is not None and summary.origin_t is None:
+            summary.origin_t = t
 
         if record.get("unparseable") is True:
             summary.unparseable_frames += 1
@@ -247,9 +253,6 @@ def summarise(lines: Iterable[str | bytes], *, gap_ms: float = DEFAULT_GAP_MS) -
 
         event = record.get("event")
         summary.events[f"{direction}:{_label(event)}"] += 1
-        t = _number(record.get("t"))
-        if t is not None and summary.origin_t is None:
-            summary.origin_t = t
 
         seq = _sequence(record.get("seq"))
         if seq is not None:

@@ -796,6 +796,40 @@ the three regressions fail against `9f64564`.
 > exits 2, as it did via the timeout. Not waiting for the timeout must not be
 > what turns it green.
 
+**Phase 12c — a full review.** Four read-only reviewers (Sonnet, per the
+standing low-effort rule for subagents) covered the whole tree: the async
+runtime; protocol, codec and parsers; CLI and reporting; tooling, CI and test
+speed. Every finding was reproduced or read in the code before being acted
+on, and two suggestions were rejected on checking (below). Fixed, with tests
+in `tests/test_full_review.py` that all fail against `34adbe4`:
+
+1. `scenario` silently ignored `--repeat`, `--baseline` and `--save-baseline`
+   -- gate 8's `--agent-audio` bug again, on three more flags. They now live
+   on `call` only, so argparse refuses them.
+2. On a two-track fork a dropped or jittered caller frame took the agent's
+   frame for that tick with it. The loss test fails against the old
+   `session.py` alone (20 frames held back), not only via 3.
+3. **Found while fixing 2, by no reviewer:** both fork tracks shared one
+   presentation clock, so each track's `media.timestamp` ran at 40 ms per
+   20 ms frame -- contradicting the encoder's own docstring, which says
+   presentation time "must advance at exactly one frame per 20 ms". The docs
+   are silent on per-track counting; each track now has its own clock, and
+   `chunk`/`sequenceNumber` stay shared as the recorded inference says. Still
+   worth settling against a real `<Start><Stream>` consumer.
+4. Scenario validation: `wait_for` with a list crashed with TypeError, and
+   `wait: .nan`/`.inf` passed and crashed mid-call.
+5. `inspect` took its time origin from the first parseable frame.
+6. README and SKILL.md did not mention `closed_by`/`closed_before_audio`.
+
+Test suite speed: fixed sleeps in two gate 2 fakes became events released at
+teardown (30 s + 5 s paid per run for calls that end in ~1 s), and the leak
+test's silent branch waits a 1 s timeout instead of 3 s, 8 times.
+
+Rejected on checking: `-n 1` in `test_documented_commands.py` (`--baseline`
+needs at least 3 runs, so 3 is already the floor), and a lazy-import rework so
+`inspect` starts faster (~0.3 s saved on one command, at the cost of moving
+imports that `cli`'s re-exports and callers depend on).
+
 ### Deliberately dropped, with the reasoning
 
 **`--out` path confinement.** PLAN.md previously listed it as owed. It is
