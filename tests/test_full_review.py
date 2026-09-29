@@ -105,9 +105,9 @@ async def test_caller_side_loss_does_not_hold_back_the_agent_track():
     assert tracks.count(TRACK_INBOUND) < 50, "precondition: some caller frames dropped"
     # One agent frame per tick, on schedule. The old code deferred one per
     # dropped caller frame and flushed them all after the caller finished.
-    # Plus one: the agent's frame for the last caller frame's own tick goes out
-    # right after it.
-    assert trailing_outbound == trailing_ticks + 1
+    # The agent's frame for a tick goes out just before the caller's (gate 13
+    # fixed the order), so only the ticks after the last caller frame trail it.
+    assert trailing_outbound == trailing_ticks
 
 
 @pytest.mark.timeout(30)

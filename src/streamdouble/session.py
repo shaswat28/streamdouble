@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -659,11 +660,13 @@ class Session:
             return 0
         return max(0, len(self.config.agent_frames) - self._outbound_cursor)
 
-    async def _stream_frames(self, connection: Any, frames: Sequence[bytes]) -> None:
+    async def _stream_frames(self, connection: Any, frames: Iterable[bytes]) -> None:
         """Send frames in real time, through the impairment layer.
 
-        On a two-track fork each inbound frame is followed immediately by the
-        outbound frame for the same instant. Both go out inside one pacer tick
+        On a two-track fork each tick carries the agent's frame for that instant
+        and then the caller's -- always in that order, so wire order does not
+        depend on whether an impairment is set (gate 13: with --latency-ms it
+        flipped on every tick). Both go out inside one pacer tick
         rather than one per tick: they represent the same 20 ms of wall time on
         a real call, and spacing them a tick apart would halve the effective
         frame rate of each track and make every timing figure wrong by a factor
@@ -690,9 +693,8 @@ class Session:
             paired = self._next_outbound_frame()
 
             try:
-                if paired is not None and (dropped or delay):
+                if paired is not None:
                     await self._send_outbound(connection, paired)
-                    paired = None
 
                 if dropped:
                     # Never goes on the wire. Presentation time still advances,
@@ -712,9 +714,6 @@ class Session:
                         connection, self.encoder.media(frame, track=TRACK_INBOUND)
                     )
                     self.result.frames_sent += 1
-
-                if paired is not None:
-                    await self._send_outbound(connection, paired)
             except websockets.ConnectionClosed:
                 self._hung_up = True
                 raise
@@ -738,7 +737,11 @@ class Session:
         sending and the agent sees a dead line, not a quiet caller.
         """
         frame_count = max(1, round(seconds / (audio.FRAME_MS / 1000)))
-        await self._stream_frames(connection, [audio.silence_frame()] * frame_count)
+        # Lazily: a long wait is cut short by max_call_s, so building every
+        # frame up front paid memory for audio that was never sent.
+        await self._stream_frames(
+            connection, itertools.repeat(audio.silence_frame(), frame_count)
+        )
 
     async def _stream_silence_until(self, connection: Any, step: WaitFor) -> None:
         """Stream silence until the agent does something, or time runs out."""
