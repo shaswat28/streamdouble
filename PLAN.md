@@ -4,9 +4,9 @@
 > WebSocket endpoint locally, at full protocol fidelity, without placing a real call.
 
 **Status:** Phases 1-12c complete, gates 1-13 passed. Public on GitHub.
-**0.3.0** (phases 10-12 and gates 9-13) is prepared on `main`; PyPI has
-0.2.0 (phases 1-9, `ab4b99f`) until the Release workflow is dispatched with
-`publish: true`. Gate 5's clean-install half is done; what is still
+PyPI is at **0.3.0**, released 2026-09-29 from `c4ad3b1` (phases 10-12 and
+gates 9-13), after CI passed on all six jobs; a clean install from PyPI was
+checked. 0.2.0 (phases 1-9) was `ab4b99f`. Gate 5's clean-install half is done; what is still
 owed there is a human who is not the author reading the README cold.
 See the [post-launch roadmap](#3b-phases-7-9--the-post-launch-roadmap) for
 phases 7-9 and [§3c](#3c-phases-10-12--after-020) for phases 10-12.
@@ -1102,18 +1102,15 @@ tests/              512 passing, on Linux + Windows × Python 3.11/3.12/3.13.
 
 ### Next session should
 
-*Updated 2026-09-27, after phases 10-12 and gates 9-11. Everything below needs
+*Updated 2026-09-29, after 0.3.0 (phases 10-12c, gates 9-13). Everything below needs
 either a decision or a person, which is why none of it got done by carrying on
 coding.*
 
-1. **Decide about releasing phases 10-12.** PyPI has 0.2.0 (phases 1-9,
-   released 2026-09-12 from `ab4b99f`). Phases 10-12 are on `main` and
-   unreleased. Shipping them means a new version -- 0.3.0 would be the natural
-   number, since they add commands and flags without breaking anything -- set
-   in both `pyproject.toml` and `src/streamdouble/__init__.py` (a test checks
-   they agree), a date on `CHANGELOG.md`'s `## Unreleased` heading, and a
-   manual `release.yml` dispatch with `publish: true`. Irreversible, as ever:
-   a PyPI version can be yanked but never re-uploaded.
+1. **Validate fork mode against a real `<Start><Stream>` consumer** -- now
+   first, because 0.3.0 changed fork `media.timestamp` to a clock per track
+   (gate 13 / phase 12c) on an inference the docs neither confirm nor deny.
+   See `protocol.py`'s "where the documentation stops" list; item 4 below is
+   the same task with its original reasoning.
 2. **Real recorded speech fixtures.** Unchanged, and still the thing that
    unlocks most: the synthetic fixtures are right for codec tests and useless
    for agent tests, because no STT will transcribe speech-*like* audio. The
