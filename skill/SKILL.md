@@ -69,6 +69,11 @@ Fields worth knowing:
   listening after it stopped sending. See below; this one catches a real bug.
 - **`violations`** - protocol errors, by code. Any entry is a definite bug in
   the agent.
+- **`timed_out`** / **`closed_before_audio`** - the two ways to exit 2, "the
+  agent never spoke": it stayed quiet, or the connection closed first.
+  **`closed_by`** says who closed it (`agent`, `caller`, or `streamdouble` when
+  the websockets library did, e.g. over an oversized frame -- then the agent
+  caused it but did not hang up).
 - **`pacing.measurement_is_reliable`** - whether streamdouble's own timing was
   good enough for the latency figures to mean anything. If false, report the
   latency as an upper bound rather than a measurement.

@@ -38,10 +38,14 @@ Where the documentation stops, and what this module infers past it:
   describe ``chunk`` as beginning at 1 and incrementing "with each subsequent
   message" -- not each subsequent message *on this track* -- and ``timestamp``
   as measured "from the start of the stream", not of the track. Neither
-  sentence mentions the two-track case at all, and no example shows it. A
-  single stream-wide sequence is the better reading of both, and it is what
-  :class:`MediaStreamEncoder` emits, but it is an inference and is labelled as
-  one here so that whoever establishes the truth knows exactly what to change.
+  sentence mentions the two-track case at all, and no example shows it.
+  :class:`MediaStreamEncoder` shares ``chunk`` and ``sequenceNumber`` across
+  tracks -- the better reading of "each subsequent message" -- but keeps
+  presentation time per track, so the inbound and outbound frames for the same
+  20 ms instant carry the same ``timestamp``: it is a *presentation* time, and
+  one shared clock ran each track at 40 ms per 20 ms frame. Both halves are
+  inferences, labelled here so that whoever establishes the truth against a
+  real ``<Start><Stream>`` consumer knows exactly what to change.
 * **The docs do not say that an app sending media on a unidirectional stream is
   committing a violation.** They state the bidirectional case affirmatively --
   "If you initiated a Stream using ``<Connect><Stream>``... you can send
@@ -286,7 +290,7 @@ class MediaStreamEncoder:
 
     ``sequenceNumber`` increments across every frame sent to the app.
     ``chunk`` increments only across ``media`` frames, and ``timestamp`` is
-    stream time in milliseconds derived from the chunk index -- 20 ms per frame.
+    presentation time in milliseconds, 20 ms per frame of each track.
 
     **One counter for both tracks, and that is an inference.** On a two-track
     fork the documentation does not say whether ``chunk``, ``timestamp`` and
@@ -297,7 +301,14 @@ class MediaStreamEncoder:
     the better reading of both sentences and is what this emits. If that turns
     out to be wrong, this is the place to change it.
 
-    Deriving the timestamp from the chunk index rather than from a clock is
+    **Except presentation time, which is per track.** ``timestamp`` is when a
+    frame's audio *plays*, so the inbound and outbound frames for the same
+    20 ms instant must carry the same one. A single clock advanced by every
+    ``media`` frame ran each track of a two-track fork at 40 ms per 20 ms of
+    audio, interleaved -- contradicting the rule in the next paragraph, which
+    this docstring already stated. Found by the phase-12 full review.
+
+    Deriving the timestamp from frames counted rather than from a clock is
     deliberate: ``media.timestamp`` is *presentation* time, so it must advance at
     exactly one frame per 20 ms regardless of how the pacer actually behaved.
     Real elapsed time belongs in the metrics layer, not in the protocol.
@@ -313,7 +324,9 @@ class MediaStreamEncoder:
         self.identity = identity or StreamIdentity()
         self._sequence = 0
         self._chunk = 0
-        self._stream_time_ms = 0
+        # Presentation time of the next frame, per track. See the class
+        # docstring: the counters are shared, the clocks are not.
+        self._track_time_ms: dict[str, int] = {}
         self._started = False
         self._stopped = False
 
@@ -343,14 +356,23 @@ class MediaStreamEncoder:
 
     @property
     def stream_time_ms(self) -> int:
-        """Presentation time of the *next* media frame, in milliseconds.
+        """How far the stream has progressed, in milliseconds of audio.
+
+        The furthest any track has reached, which on a single-track stream is
+        simply the presentation time of its next frame -- the meaning this had
+        before tracks got clocks of their own (gate 13). Per track, see
+        :meth:`track_time_ms`.
 
         Tracked separately from the chunk counter rather than derived from it,
         because the two come apart the moment audio is lost upstream. ``chunk``
         counts frames actually sent; presentation time counts elapsed audio,
         including audio that never arrived. See :meth:`skip_frame`.
         """
-        return self._stream_time_ms
+        return max(self._track_time_ms.values(), default=0)
+
+    def track_time_ms(self, track: str) -> int:
+        """Presentation time of the next media frame on ``track``."""
+        return self._track_time_ms.get(track, 0)
 
     def _next_sequence(self) -> int:
         self._sequence += 1
@@ -410,9 +432,9 @@ class MediaStreamEncoder:
                 f"media payload must be exactly {FRAME_BYTES} bytes "
                 f"({FRAME_MS} ms of mu-law), got {len(payload)}"
             )
-        timestamp_ms = self._stream_time_ms
+        timestamp_ms = self.track_time_ms(track)
         self._chunk += 1
-        self._stream_time_ms += FRAME_MS
+        self._track_time_ms[track] = timestamp_ms + FRAME_MS
         return build_media(
             self.identity,
             self._next_sequence(),
@@ -422,7 +444,7 @@ class MediaStreamEncoder:
             track=track,
         )
 
-    def skip_frame(self) -> None:
+    def skip_frame(self, track: str = TRACK_INBOUND) -> None:
         """Advance presentation time by one frame without sending anything.
 
         Models audio lost upstream of Twilio, on the carrier's RTP leg. Twilio
@@ -442,7 +464,7 @@ class MediaStreamEncoder:
             FrameSequenceError: Called outside the stream's lifetime.
         """
         self._require_started("media")
-        self._stream_time_ms += FRAME_MS
+        self._track_time_ms[track] = self.track_time_ms(track) + FRAME_MS
 
     def mark(self, name: str) -> dict[str, Any]:
         """Build a ``mark`` echo, consuming the next sequence number."""

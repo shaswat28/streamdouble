@@ -34,6 +34,7 @@ in the agent.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -331,30 +332,54 @@ def _parse_say(value: Any, position: str, base: Path) -> Say:
     return Say(path=path, frames=frames)
 
 
-def _parse_wait(value: Any, position: str) -> Wait:
+#: Longest a single step may last. A day is far past any real call -- and past
+#: max_call_s, which ends the call first -- so anything longer is a typo, and
+#: an unbounded one is a crash: `wait: 1e308` overflowed converting seconds to
+#: frames mid-call even after .inf was refused (gate 13).
+MAX_STEP_S = 24 * 60 * 60
+
+
+def _seconds(value: Any, position: str, what: str) -> float:
+    """A positive, finite number of seconds, or a ScenarioError.
+
+    Finite matters: YAML spells infinity and NaN ``.inf`` and ``.nan``, both
+    passed a ``<= 0`` check, and both then crashed mid-call converting seconds
+    to frames -- with the agent left mid-sentence, the failure this loader
+    exists to prevent. ``bool`` is refused because it is an ``int``, and
+    ``timeout: true`` meaning one second is not something anyone wrote.
+    """
     if not isinstance(value, int | float) or isinstance(value, bool):
-        raise ScenarioError(f"{position}'wait' takes a number of seconds")
-    if value <= 0:
-        raise ScenarioError(f"{position}'wait' must be positive, got {value}")
-    return Wait(seconds=float(value))
+        raise ScenarioError(f"{position}{what} takes a number of seconds")
+    if not math.isfinite(value) or value <= 0:
+        raise ScenarioError(f"{position}{what} must be a positive number, got {value}")
+    if value > MAX_STEP_S:
+        raise ScenarioError(
+            f"{position}{what} of {value}s is longer than a day ({MAX_STEP_S}s)"
+        )
+    return float(value)
+
+
+def _parse_wait(value: Any, position: str) -> Wait:
+    return Wait(seconds=_seconds(value, position, "'wait'"))
 
 
 def _parse_wait_for(value: Any, position: str) -> WaitFor:
     timeout = 10.0
     if isinstance(value, dict):
         event = value.get("event")
-        timeout = value.get("timeout", timeout)
-        if not isinstance(timeout, int | float) or timeout <= 0:
-            raise ScenarioError(f"{position}'timeout' must be a positive number")
+        timeout = _seconds(value.get("timeout", timeout), position, "'timeout'")
     else:
         event = value
 
-    if event not in WAITABLE:
+    # A string check before the set lookup: YAML hands over lists and mappings
+    # too, and `[audio, mark] in WAITABLE` raised TypeError (unhashable) instead
+    # of a ScenarioError -- a traceback for a typo in an untrusted file.
+    if not isinstance(event, str) or event not in WAITABLE:
         raise ScenarioError(
             f"{position}cannot wait for {event!r}. "
             f"Known events: {', '.join(sorted(WAITABLE))}"
         )
-    return WaitFor(event=event, timeout_s=float(timeout))
+    return WaitFor(event=event, timeout_s=timeout)
 
 
 def _parse_dtmf(value: Any, position: str) -> Dtmf:
