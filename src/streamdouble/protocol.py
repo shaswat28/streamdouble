@@ -297,6 +297,13 @@ class MediaStreamEncoder:
     the better reading of both sentences and is what this emits. If that turns
     out to be wrong, this is the place to change it.
 
+    **Except presentation time, which is per track.** ``timestamp`` is when a
+    frame's audio *plays*, so the inbound and outbound frames for the same
+    20 ms instant must carry the same one. A single clock advanced by every
+    ``media`` frame ran each track of a two-track fork at 40 ms per 20 ms of
+    audio, interleaved -- contradicting the rule in the next paragraph, which
+    this docstring already stated. Found by the phase-12 full review.
+
     Deriving the timestamp from the chunk index rather than from a clock is
     deliberate: ``media.timestamp`` is *presentation* time, so it must advance at
     exactly one frame per 20 ms regardless of how the pacer actually behaved.
@@ -313,7 +320,9 @@ class MediaStreamEncoder:
         self.identity = identity or StreamIdentity()
         self._sequence = 0
         self._chunk = 0
-        self._stream_time_ms = 0
+        # Presentation time of the next frame, per track. See the class
+        # docstring: the counters are shared, the clocks are not.
+        self._track_time_ms: dict[str, int] = {}
         self._started = False
         self._stopped = False
 
@@ -343,14 +352,18 @@ class MediaStreamEncoder:
 
     @property
     def stream_time_ms(self) -> int:
-        """Presentation time of the *next* media frame, in milliseconds.
+        """Presentation time of the *next* inbound media frame, in milliseconds.
 
         Tracked separately from the chunk counter rather than derived from it,
         because the two come apart the moment audio is lost upstream. ``chunk``
         counts frames actually sent; presentation time counts elapsed audio,
         including audio that never arrived. See :meth:`skip_frame`.
         """
-        return self._stream_time_ms
+        return self.track_time_ms(TRACK_INBOUND)
+
+    def track_time_ms(self, track: str) -> int:
+        """Presentation time of the next media frame on ``track``."""
+        return self._track_time_ms.get(track, 0)
 
     def _next_sequence(self) -> int:
         self._sequence += 1
@@ -410,9 +423,9 @@ class MediaStreamEncoder:
                 f"media payload must be exactly {FRAME_BYTES} bytes "
                 f"({FRAME_MS} ms of mu-law), got {len(payload)}"
             )
-        timestamp_ms = self._stream_time_ms
+        timestamp_ms = self.track_time_ms(track)
         self._chunk += 1
-        self._stream_time_ms += FRAME_MS
+        self._track_time_ms[track] = timestamp_ms + FRAME_MS
         return build_media(
             self.identity,
             self._next_sequence(),
@@ -422,7 +435,7 @@ class MediaStreamEncoder:
             track=track,
         )
 
-    def skip_frame(self) -> None:
+    def skip_frame(self, track: str = TRACK_INBOUND) -> None:
         """Advance presentation time by one frame without sending anything.
 
         Models audio lost upstream of Twilio, on the carrier's RTP leg. Twilio
@@ -442,7 +455,7 @@ class MediaStreamEncoder:
             FrameSequenceError: Called outside the stream's lifetime.
         """
         self._require_started("media")
-        self._stream_time_ms += FRAME_MS
+        self._track_time_ms[track] = self.track_time_ms(track) + FRAME_MS
 
     def mark(self, name: str) -> dict[str, Any]:
         """Build a ``mark`` echo, consuming the next sequence number."""

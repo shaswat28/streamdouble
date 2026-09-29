@@ -582,14 +582,10 @@ class Session:
             if frame is None:
                 return
             try:
-                await self._send(
-                    connection, self.encoder.media(frame, track=TRACK_OUTBOUND)
-                )
+                await self._send_outbound(connection, frame)
             except websockets.ConnectionClosed:
                 self._hung_up = True
                 raise
-            self.result.frames_sent += 1
-            self.result.outbound_frames_sent += 1
 
     async def _run_step(self, connection: Any, step: Step) -> None:
         """Execute one scenario step."""
@@ -681,42 +677,58 @@ class Session:
                 self._hung_up = True
                 return
 
-            if self.network.should_drop():
-                # Never goes on the wire. Presentation time still advances, so
-                # the agent sees a media.timestamp discontinuity -- the only
-                # signal it can get, since the WebSocket leg is TCP and cannot
-                # lose a frame in transit. See chaos.py.
-                self.encoder.skip_frame()
-                self.result.frames_dropped += 1
-                continue
+            # Drawn in the same order as always -- drop, then delay only if
+            # kept -- so a given --chaos-seed makes the same decisions it did.
+            dropped = self.network.should_drop()
+            delay = 0.0 if dropped else self.network.delay_s()
 
-            delay = self.network.delay_s()
-            if delay:
-                # Delays this frame's release without moving any other frame's
-                # deadline, so jitter perturbs spacing without accumulating --
-                # the pacer's absolute deadlines absorb it, exactly as a real
-                # jitter buffer would.
-                await asyncio.sleep(delay)
+            # The impairments model the caller's leg only (see chaos.py). The
+            # agent's frame for this instant is on a different leg, so it goes
+            # out on schedule whatever happened to the caller's: it used to be
+            # skipped with a dropped frame and held back by a delayed one,
+            # which bunched and drifted the whole outbound track of a fork.
+            paired = self._next_outbound_frame()
 
             try:
-                await self._send(
-                    connection, self.encoder.media(frame, track=TRACK_INBOUND)
-                )
-                self.result.frames_sent += 1
+                if paired is not None and (dropped or delay):
+                    await self._send_outbound(connection, paired)
+                    paired = None
 
-                paired = self._next_outbound_frame()
-                if paired is not None:
+                if dropped:
+                    # Never goes on the wire. Presentation time still advances,
+                    # so the agent sees a media.timestamp discontinuity -- the
+                    # only signal it can get, since the WebSocket leg is TCP and
+                    # cannot lose a frame in transit. See chaos.py.
+                    self.encoder.skip_frame()
+                    self.result.frames_dropped += 1
+                else:
+                    if delay:
+                        # Delays this frame's release without moving any other
+                        # frame's deadline, so jitter perturbs spacing without
+                        # accumulating -- the pacer's absolute deadlines absorb
+                        # it, exactly as a real jitter buffer would.
+                        await asyncio.sleep(delay)
                     await self._send(
-                        connection, self.encoder.media(paired, track=TRACK_OUTBOUND)
+                        connection, self.encoder.media(frame, track=TRACK_INBOUND)
                     )
-                    # Counted too. 150 frames on the wire reported as 100 is a
-                    # number somebody eventually reconciles against a packet
-                    # capture, and finds wrong.
                     self.result.frames_sent += 1
-                    self.result.outbound_frames_sent += 1
+
+                if paired is not None:
+                    await self._send_outbound(connection, paired)
             except websockets.ConnectionClosed:
                 self._hung_up = True
                 raise
+
+    async def _send_outbound(self, connection: Any, frame: bytes) -> None:
+        """Send one frame of the agent's track on a fork, and count it.
+
+        Counted too. 150 frames on the wire reported as 100 is a number
+        somebody eventually reconciles against a packet capture, and finds
+        wrong.
+        """
+        await self._send(connection, self.encoder.media(frame, track=TRACK_OUTBOUND))
+        self.result.frames_sent += 1
+        self.result.outbound_frames_sent += 1
 
     async def _stream_silence(self, connection: Any, seconds: float) -> None:
         """Stream silence for a fixed duration.

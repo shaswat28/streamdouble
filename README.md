@@ -116,6 +116,8 @@ streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
   "stall_count": 0,
   "violations": [],
   "timed_out": false,
+  "closed_by": null,
+  "closed_before_audio": false,
   "pacing": {
     "drift_ms": 7.6,
     "late_frames": 51,
@@ -132,6 +134,10 @@ streamdouble call ws://localhost:8000/media-stream --audio hello.wav \
 
 Exit codes: `0` clean, `1` a threshold failed, `2` the agent never spoke,
 `3` the agent violated the protocol, `4` usage error, `5` could not connect.
+"Never spoke" is either `timed_out` (it stayed quiet) or `closed_before_audio`
+(the connection closed first); `closed_by` says who closed it -- `agent`,
+`caller` (a scenario's `hangup`), or `streamdouble` when the websockets library
+closed it, e.g. over an oversized frame.
 
 Two things that behaviour turns on, both deliberate:
 

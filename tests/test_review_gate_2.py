@@ -65,9 +65,13 @@ async def test_a_send_failure_before_start_reports_the_real_cause(frames):
     their agent.
     """
     port = free_port()
+    # Held until the test is done rather than slept on for a fixed time:
+    # server.wait_closed() waits for the handler, so a fixed sleep was paid in
+    # full after the assertions had already passed.
+    release = asyncio.Event()
 
     async def idle(websocket, *args):
-        await asyncio.sleep(5)
+        await release.wait()
 
     server = await websockets.serve(idle, "127.0.0.1", port)
     try:
@@ -84,6 +88,7 @@ async def test_a_send_failure_before_start_reports_the_real_cause(frames):
         assert result.closed_early
         assert result.frames_sent == 0
     finally:
+        release.set()
         server.close()
         await server.wait_closed()
 
@@ -208,10 +213,13 @@ async def test_a_peer_that_stops_reading_does_not_hang_shutdown(frames):
     returns.
     """
     port = free_port()
+    # See the test above: released at the end, not slept on. This one was a
+    # 30 s sleep, paid on every run after a call that ends in about one.
+    release = asyncio.Event()
 
     async def accept_and_ignore(websocket, *args):
         # Never reads, never writes, keeps the socket open.
-        await asyncio.sleep(30)
+        await release.wait()
 
     server = await websockets.serve(accept_and_ignore, "127.0.0.1", port)
     try:
@@ -228,5 +236,6 @@ async def test_a_peer_that_stops_reading_does_not_hang_shutdown(frames):
         assert result.timed_out
         assert elapsed < 30, f"shutdown took {elapsed:.1f}s"
     finally:
+        release.set()
         server.close()
         await server.wait_closed()

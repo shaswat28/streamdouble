@@ -33,7 +33,10 @@ from streamdouble.session import SessionConfig
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
-FAST = SessionConfig(response_timeout_s=3.0, quiet_period_s=0.3, max_drain_s=3.0)
+# response_timeout_s is 1.0, not 3.0: the silent-agent branch below waits it out
+# on every repeat, and whether cleanup leaks does not depend on how long the
+# wait was. The echo agent answers in about 0.2 s, so the happy path is unmoved.
+FAST = SessionConfig(response_timeout_s=1.0, quiet_period_s=0.3, max_drain_s=3.0)
 
 #: Enough repetitions that a per-call leak is unmistakable, few enough that the
 #: test stays quick. A leak of one object per call shows up as REPEATS of them.
