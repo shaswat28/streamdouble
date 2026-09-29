@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-29
+
+Phases 10-12: one new subcommand, one new flag, a timer change on Windows, and
+the fixes from gates 12-13 and a full-codebase review. This is not the
+"0.3.0" in `PLAN.md`'s phase-7-9 table, which labels what Phase 8's code is;
+that code shipped in 0.2.0.
+
+Two behaviour changes a CI pipeline may notice: an agent that hangs up without
+speaking now exits 2 rather than 0, and `scenario` refuses `--repeat`,
+`--baseline` and `--save-baseline` (exit 4) rather than silently ignoring them.
 
 - `streamdouble inspect TRACE [--json] [--gap-ms MS]` summarises a `--trace`
   file: whether the agent spoke and when, marks and their echoes, clears, gaps
