@@ -215,6 +215,66 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
         help="seed for the impairment decisions (default: %(default)s)",
     )
 
+    gates = command.add_argument_group(
+        "CI gates",
+        "Thresholds turn a call into a pass/fail check. A failed threshold "
+        "exits 1. A metric that was never measured fails its threshold: an "
+        "agent that said nothing has not met an 800ms target, and treating "
+        "missing data as a pass is how a broken agent gets a green build.",
+    )
+    gates.add_argument(
+        "--max-first-audio-ms", type=float, metavar="MS",
+        help=(
+            "fail if the agent's first audio takes longer than this. "
+            f"{CONVERSATIONAL_FLOW_MS} is the usual conversational-flow target; "
+            "see the metrics module for where that number comes from"
+        ),
+    )
+    gates.add_argument(
+        "--max-gap-ms", type=float, metavar="MS",
+        help="fail if any silence within the agent's reply exceeds this",
+    )
+    gates.add_argument(
+        "--junit", type=Path, metavar="PATH",
+        help=(
+            "also write a JUnit XML report: one testcase per threshold, "
+            "expectation and protocol check. Never greener than the exit code"
+        ),
+    )
+    gates.add_argument(
+        "--allow-no-audio", action="store_true",
+        help="treat a missing measurement as passing rather than failing its threshold",
+    )
+
+
+class _Parser(argparse.ArgumentParser):
+    """An ``ArgumentParser`` that fails with this package's own usage code.
+
+    ``argparse`` exits 2 on a bad flag or an unrecognised argument, which here
+    is ``EXIT_TIMEOUT`` -- a documented, meaningful code. So a reader who typed
+    a command wrong was told their agent had failed to respond in time, and a
+    CI job gating on exit codes read a typo as a slow agent. Everything else
+    about ``argparse``'s behaviour, including exiting 0 for ``--help`` and
+    ``--version``, is left alone.
+
+    ``add_subparsers`` propagates ``parser_class``, so every subcommand
+    inherits this without being told to.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
+
+def _add_series_options(command: argparse.ArgumentParser) -> None:
+    """Repeat runs and baselines. ``call`` only.
+
+    These used to be on the shared option set, so ``scenario`` accepted
+    ``--repeat 20 --save-baseline b.json``, ran once and wrote nothing -- a
+    regression gate that could never fire, and the same shape as gate 8's
+    silently ignored ``--agent-audio``. Offered only where they are honoured,
+    argparse refuses them on ``scenario`` with a usage error.
+    """
     series = command.add_argument_group(
         "repeat runs",
         "One call is a sample, not a measurement. Repeating gives a "
@@ -279,56 +339,6 @@ def _add_shared_options(command: argparse.ArgumentParser) -> None:
         ),
     )
 
-    gates = command.add_argument_group(
-        "CI gates",
-        "Thresholds turn a call into a pass/fail check. A failed threshold "
-        "exits 1. A metric that was never measured fails its threshold: an "
-        "agent that said nothing has not met an 800ms target, and treating "
-        "missing data as a pass is how a broken agent gets a green build.",
-    )
-    gates.add_argument(
-        "--max-first-audio-ms", type=float, metavar="MS",
-        help=(
-            "fail if the agent's first audio takes longer than this. "
-            f"{CONVERSATIONAL_FLOW_MS} is the usual conversational-flow target; "
-            "see the metrics module for where that number comes from"
-        ),
-    )
-    gates.add_argument(
-        "--max-gap-ms", type=float, metavar="MS",
-        help="fail if any silence within the agent's reply exceeds this",
-    )
-    gates.add_argument(
-        "--junit", type=Path, metavar="PATH",
-        help=(
-            "also write a JUnit XML report: one testcase per threshold, "
-            "expectation and protocol check. Never greener than the exit code"
-        ),
-    )
-    gates.add_argument(
-        "--allow-no-audio", action="store_true",
-        help="treat a missing measurement as passing rather than failing its threshold",
-    )
-
-
-class _Parser(argparse.ArgumentParser):
-    """An ``ArgumentParser`` that fails with this package's own usage code.
-
-    ``argparse`` exits 2 on a bad flag or an unrecognised argument, which here
-    is ``EXIT_TIMEOUT`` -- a documented, meaningful code. So a reader who typed
-    a command wrong was told their agent had failed to respond in time, and a
-    CI job gating on exit codes read a typo as a slow agent. Everything else
-    about ``argparse``'s behaviour, including exiting 0 for ``--help`` and
-    ``--version``, is left alone.
-
-    ``add_subparsers`` propagates ``parser_class``, so every subcommand
-    inherits this without being told to.
-    """
-
-    def error(self, message: str) -> None:  # type: ignore[override]
-        self.print_usage(sys.stderr)
-        self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
@@ -357,6 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="WAV file to stream as the caller's voice. Resampled to 8 kHz mono automatically.",
     )
     _add_shared_options(call)
+    _add_series_options(call)
 
     play = subcommands.add_parser(
         "scenario",

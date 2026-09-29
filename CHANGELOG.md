@@ -27,6 +27,25 @@
 - **Fixed:** a scenario `expect` step that the call ended before reaching is
   reported as failed ("not reached"). It used to be left out, so an agent that
   hung up before a failing expectation could exit 0.
+- **Fixed:** `scenario` no longer accepts `--repeat`, `--baseline` or
+  `--save-baseline`. It took them and ignored them -- one call, no baseline
+  written, no comparison -- so a scenario regression gate could never fail.
+  They are now a usage error (exit 4); they remain on `call`.
+- **Fixed:** on a two-track fork, each track's `media.timestamp` now advances
+  20 ms per frame. The tracks shared one clock, so each ran at 40 ms per frame.
+  `chunk` and `sequenceNumber` are still shared; the Twilio docs do not say,
+  and that reading is unchanged (see `protocol.py`). Within each 20 ms tick
+  the agent's frame is now sent before the caller's.
+- **Fixed:** on a two-track fork with `--loss` or `--jitter-ms`, the agent's
+  track is no longer dropped or delayed along with the caller's. Impairments
+  model the caller's leg only.
+- **Fixed:** malformed scenario steps are refused before the call:
+  `wait_for` with a list or mapping raised a TypeError, and `wait: .nan` or
+  `.inf` passed validation and crashed mid-call, as did a huge finite one;
+  a step now lasts at most a day. `timeout: true` is refused rather than read
+  as one second.
+- **Fixed:** `streamdouble inspect` measures times from the first frame in the
+  trace, parseable or not, rather than the first well-formed one.
 
 ## 0.2.0 — 2026-09-12
 
