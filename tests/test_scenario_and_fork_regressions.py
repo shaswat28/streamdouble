@@ -1,7 +1,8 @@
-"""Regression tests for the full-codebase review after phase 12b.
+"""Regression tests for scenario flag handling, fork timing and trace inspection.
 
-Four read-only reviewers covered the whole tree; these are the findings that
-survived checking. Each test fails against 34adbe4.
+These came out of a read-only review of the whole codebase; they are the
+findings that survived checking. Each test covers a behaviour the code used to
+get wrong.
 
 1. ``scenario`` accepted ``--repeat``, ``--baseline`` and ``--save-baseline``
    and ignored all three: one call, no baseline written, no comparison made.
@@ -105,8 +106,8 @@ async def test_caller_side_loss_does_not_hold_back_the_agent_track():
     assert tracks.count(TRACK_INBOUND) < 50, "precondition: some caller frames dropped"
     # One agent frame per tick, on schedule. The old code deferred one per
     # dropped caller frame and flushed them all after the caller finished.
-    # The agent's frame for a tick goes out just before the caller's (gate 13
-    # fixed the order), so only the ticks after the last caller frame trail it.
+    # The agent's frame for a tick goes out just before the caller's (that order is
+    # now fixed), so only the ticks after the last caller frame trail it.
     assert trailing_outbound == trailing_ticks
 
 

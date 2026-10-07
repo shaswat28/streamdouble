@@ -1,9 +1,9 @@
-"""Regression tests for the issues found at review gate 2.
+"""Regression tests for async lifecycle bugs in the session.
 
-Gate 2 is about async lifecycle, and its findings share a shape: each one is
-invisible on the happy path and only appears when something goes wrong or when
-a call runs long. That is exactly the class of bug the plan warns tests miss, so
-these reproduce the conditions rather than asserting on the code's structure.
+These findings share a shape: each one is invisible on the happy path and only
+appears when something goes wrong or when a call runs long. That is exactly the
+class of bug tests tend to miss, so these reproduce the conditions rather than
+asserting on the code's structure.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ class SendFailsImmediately:
 async def test_a_send_failure_before_start_reports_the_real_cause(frames):
     """A socket that dies before ``start`` reports closed_early, not an internal error.
 
-    The cleanup path builds a ``stop`` frame, and the gate 1 ordering guard
+    The cleanup path builds a ``stop`` frame, and the frame-ordering guard
     refuses to build one when ``start`` never went out. Raised from a
     ``finally``, that FrameSequenceError replaced the ConnectionClosed that was
     the actual problem, and surfaced as an unhandled ExceptionGroup naming a

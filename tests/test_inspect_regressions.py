@@ -1,6 +1,6 @@
-"""Regression tests for review gate 9 (`streamdouble inspect`).
+"""Regression tests for `streamdouble inspect`.
 
-Each test fails against the code as it stood at 1ad856c.
+Each test covers a behaviour the command used to get wrong.
 
 1. Clear and gap counts were read off lists capped at 50, so 120 clears
    rendered as "clears 50" and gaps had no total at all.

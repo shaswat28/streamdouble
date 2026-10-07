@@ -2,9 +2,8 @@
 
 ## 0.3.0 — 2026-09-29
 
-Phases 10-12: one new subcommand, one new flag, a timer change on Windows, and
-the fixes from gates 12-13 and a full-codebase review. Phases 7-9 shipped
-together in 0.2.0.
+One new subcommand, one new flag, a timer change on Windows, and a round of
+fixes for hangup handling, two-track forks and scenario validation.
 
 Two behaviour changes a CI pipeline may notice: an agent that hangs up without
 speaking now exits 2 rather than 0, and `scenario` refuses `--repeat`,
@@ -57,9 +56,10 @@ speaking now exits 2 rather than 0, and `scenario` refuses `--repeat`,
 
 ## 0.2.0 — 2026-09-12
 
-Three phases of work in one release. They were planned as one arc and built as
-one, so they ship as one rather than as three versions nobody had a reason to
-install separately.
+Three pieces of work in one release: the Python API, the frame trace and pytest
+plugin, and repeat runs with baseline comparison. They were planned as one arc
+and built as one, so they ship as one rather than as three versions nobody had a
+reason to install separately.
 
 ### streamdouble is now a library as well as a command
 

@@ -2,7 +2,7 @@
 
 These run against a real uvicorn server on a real socket, not an in-process
 transport. That is deliberate and it is the point of this file: the failures
-gate 2 is concerned with -- a receive task dying silently, a hang when the peer
+of async lifecycle -- a receive task dying silently, a hang when the peer
 disappears, cleanup that does not happen on the error path -- are exactly the
 ones an in-process fake cannot reproduce, because it has no socket to close and
 no second task to lose.
@@ -325,7 +325,7 @@ async def test_concurrent_calls_do_not_interfere(server, frames):
 async def test_events_are_recorded_in_monotonic_order(server, frames):
     """The event log is ordered and uses a monotonic clock.
 
-    Every Phase 3 measurement is derived from this log, so time running
+    Every measurement is derived from this log, so time running
     backwards in it would produce negative latencies reported with confidence.
     """
     result = await Session(server, frames, config=quick_config()).run()

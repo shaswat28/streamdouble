@@ -246,8 +246,8 @@ async def test_tracing_does_not_change_the_measurement(server, speech_8k_path, t
 
     This is the design claim `trace.py` is built around, and the reason nothing
     is written to disk during a call. It is also a bug this project has already
-    had once in a different guise: gate 2 found quadratic audio accumulation
-    running inside the receive loop, which did not merely make long calls slow
+    had once in a different guise: quadratic audio accumulation
+    ran inside the receive loop, which did not merely make long calls slow
     -- it delayed frame handling and inflated the very latency figures the tool
     exists to report, worse the longer the call, and plausible at every point.
 

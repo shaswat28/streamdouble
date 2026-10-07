@@ -270,7 +270,7 @@ def _add_series_options(command: argparse.ArgumentParser) -> None:
 
     These used to be on the shared option set, so ``scenario`` accepted
     ``--repeat 20 --save-baseline b.json``, ran once and wrote nothing -- a
-    regression gate that could never fire, and the same shape as gate 8's
+    regression gate that could never fire, and the same shape as the earlier
     silently ignored ``--agent-audio``. Offered only where they are honoured,
     argparse refuses them on ``scenario`` with a usage error.
     """
@@ -457,8 +457,8 @@ def agent_frames_from(args: argparse.Namespace) -> list[bytes]:
     Shared by both subcommands rather than living in ``call``. The fork flags
     are on the *shared* option set, so ``scenario`` accepted every one of them
     and then silently ignored ``--agent-audio`` -- declaring an outbound track
-    in its start frame and sending nothing on it for the whole call. Gate 8
-    found that; the fix is for there to be one place this is done.
+    in its start frame and sending nothing on it for the whole call. That was
+    a real bug; the fix is for there to be one place this is done.
 
     Raises:
         UsageError: The combination cannot be honoured.
@@ -958,7 +958,7 @@ async def run_series(args: argparse.Namespace, frames: list[bytes], config) -> i
                 file=sys.stderr,
             )
             # The report was already written from the calls, which may all
-            # have passed. Rewrite it red: gate 10 found a green report next
+            # have passed. Rewrite it red: it used to be left green next
             # to this exit 4.
             _write_junit(
                 args, reports, comparison, EXIT_USAGE,
@@ -1050,7 +1050,7 @@ async def run_inspect_command(args: argparse.Namespace) -> int:
 
     Exits 0 whatever a real trace shows about the agent: it reports, it does
     not judge. Exits EXIT_USAGE when the file cannot be read or holds no frame
-    records at all -- gate 9 found an empty or wrong file reading as "agent
+    records at all -- an empty or wrong file used to read as "agent
     spoke no" with exit 0, which is missing data presented as a verdict.
     """
     if not args.gap_ms > 0:
@@ -1066,7 +1066,7 @@ async def run_inspect_command(args: argparse.Namespace) -> int:
     else:
         print(tracereport.render(summary))
     if summary.empty:
-        # Gate 9: a wrong or empty file used to exit 0 reading "agent spoke no".
+        # A wrong or empty file used to exit 0 reading "agent spoke no".
         print(f"streamdouble: {args.trace} contains no trace records", file=sys.stderr)
         return EXIT_USAGE
     return EXIT_OK
@@ -1092,7 +1092,7 @@ def _junit_for_early_exit(args: argparse.Namespace, code: int) -> None:
     Connection failures and usage errors return long before a call report
     exists. Writing nothing left whatever file was already at --junit in
     place, and on a reused workspace that was the last run's green report,
-    published next to this red job (gate 10).
+    published next to this red job.
     """
     if code == EXIT_OK or not getattr(args, "junit", None):
         return

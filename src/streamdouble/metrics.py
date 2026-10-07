@@ -77,7 +77,7 @@ MIN_SAMPLES_FOR_PERCENTILE = 20
 
 #: Version of the ``--json`` payload's shape.
 #:
-#: Shipped before anything consumes it, deliberately. Phase 8 stores a run as a
+#: Shipped before anything consumes it, deliberately. Baseline mode stores a run as a
 #: baseline and compares a later run against it, and the comparison has to know
 #: whether the two describe the same thing. Adding this field *after* baselines
 #: exist in the wild is the release where you discover that the files you need

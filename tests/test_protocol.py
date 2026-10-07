@@ -311,8 +311,8 @@ def test_timestamp_advances_20ms_per_frame_from_zero(encoder):
     """Presentation time is stream time: 0, 20, 40, ... milliseconds.
 
     Derived from the chunk index rather than a clock, so it stays exact however
-    the pacer behaved. An off-by-one here shifts every latency measurement in
-    Phase 3 by a full frame.
+    the pacer behaved. An off-by-one here shifts every latency measurement
+    by a full frame.
     """
     encoder.start()
     timestamps = [encoder.media(frame())["media"]["timestamp"] for _ in range(5)]
@@ -461,8 +461,8 @@ def test_double_base64_encoded_payload_is_rejected_or_wrong_length(identity):
 
     Base64 of base64 is still valid base64, so it cannot always be caught by
     decoding alone -- but it inflates by 4/3, so it can never be mistaken for a
-    correctly sized frame. This documents the detection that Phase 3's frame
-    size checking relies on.
+    correctly sized frame. This documents the detection that the
+    frame size checking relies on.
     """
     once = base64.b64encode(b"\xff" * 160)
     twice = base64.b64encode(once).decode()

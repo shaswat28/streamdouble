@@ -1,4 +1,4 @@
-"""Regression tests for review gate 11 (the Windows timer).
+"""Regression tests for the Windows timer.
 
 1. Two tests demanded "raised" on any Windows, so on a Windows without
    winmm.dll -- where "refused" is the designed answer -- the suite failed
@@ -6,8 +6,8 @@
    machine through a real call; the old assertion in test_timer.py would have
    rejected its outcome.
 2. The "not requested" default was a string literal in pacer.py and
-   metrics.py as well as a constant in timer.py. The second test fails against
-   614d618, where the literal appears three times.
+   metrics.py as well as a constant in timer.py. The second test fails when
+   the literal appears three times instead of once.
 """
 
 from __future__ import annotations

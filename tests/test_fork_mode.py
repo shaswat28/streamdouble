@@ -201,7 +201,7 @@ async def test_a_bidirectional_call_is_unaffected(server, speech_8k_path):
     """The default path must not have changed at all.
 
     A fork flag that quietly altered ordinary calls would be the worst possible
-    outcome of this phase, since ordinary calls are what everyone runs.
+    outcome of this feature, since ordinary calls are what everyone runs.
     """
     report = await api.call(server, audio_path=speech_8k_path, config=FAST)
 

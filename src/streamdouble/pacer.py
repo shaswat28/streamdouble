@@ -192,7 +192,7 @@ class Pacer:
         before would report zero for every frame that slept, which hides the
         most common real imperfection: ``asyncio.sleep`` guarantees a minimum
         duration, not an exact one, so a frame routinely lands a fraction of a
-        millisecond past its deadline. Phase 3's latency figures are only as
+        millisecond past its deadline. The latency figures are only as
         honest as this number, so it reports when the frame was actually
         released.
         """

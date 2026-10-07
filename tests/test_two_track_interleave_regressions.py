@@ -1,4 +1,4 @@
-"""Regression tests for what review gate 8 found.
+"""Regression tests for the two-track (fork) interleave.
 
 Four findings, and all four are one root cause seen from different angles: the
 two-track interleave was driven by the *caller's* frame list, so anything about

@@ -9,11 +9,11 @@ Three decisions, each of which costs something:
 
 **Nothing is written during the call.** Records are appended to a list in
 memory and flushed once, after the socket closes. File I/O inside the receive
-loop is the exact shape of the bug gate 2 found -- work on the event loop that
+loop is the exact shape of an earlier bug in the session -- work on the event loop that
 delays frame handling and inflates the very latency this tool exists to report,
 worse the chattier the agent, and plausible at every point. A trace that
 changes the measurement is not a diagnostic, it is a heisenbug generator.
-`tests/test_review_gate_6.py` asserts a traced run and an untraced run report
+`tests/test_api_trace_plugin_regressions.py` asserts a traced run and an untraced run report
 the same figures.
 
 **Payloads are excluded by default.** A minute of audio is about 30 MB of
@@ -52,9 +52,9 @@ REDACTED = "<redacted>"
 
 #: Most frames to retain. Beyond this the trace stops growing and says so.
 #:
-#: Gate 4 measured a flooding endpoint driving 206 MB of buffered audio and
+#: A flooding endpoint was measured driving 206 MB of buffered audio and
 #: 436 MB of peak memory in a five-second call, and capped both the audio and
-#: the event log in response. The trace arrived afterwards with no cap at all
+#: the event log in response. The trace was added afterwards with no cap at all
 #: and reopened the same vector: a record is roughly a kilobyte, so a ten
 #: minute call accumulates tens of megabytes, and with ``payloads=True``
 #: against that same endpoint each record carries a ~533 KB base64 string.
@@ -66,7 +66,7 @@ MAX_TRACE_RECORDS = 100_000
 #: Most payload bytes to retain in total, when ``payloads=True``.
 #:
 #: Separate from the record cap because the record cap does not bound this:
-#: gate 4's endpoint sends few frames and enormous ones, so a count-based limit
+#: that endpoint sends few frames and enormous ones, so a count-based limit
 #: alone lets a handful of records carry hundreds of megabytes.
 MAX_TRACE_PAYLOAD_BYTES = 32 * 1024 * 1024
 
@@ -164,8 +164,8 @@ class Trace:
                 record["bytes"] = len(payload)
                 record["sha256_8"] = _digest(payload)
                 if self.config.payloads:
-                    # The record cap does not bound this on its own: gate 4's
-                    # endpoint sends few frames and enormous ones, so a
+                    # The record cap does not bound this on its own: a
+                    # flooding endpoint sends few frames and enormous ones, so a
                     # count-based limit lets a handful of records carry
                     # hundreds of megabytes. The digest above is kept either
                     # way, so a truncated trace stays comparable.

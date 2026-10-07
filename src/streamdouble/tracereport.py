@@ -45,7 +45,7 @@ __all__ = [
 ]
 
 #: Longest line parsed. A trace with ``--trace-payloads`` holds base64 audio,
-#: and gate 4's flooding endpoint sent frames of ~533 KB, so real lines can be
+#: and a flooding endpoint has been seen sending frames of ~533 KB, so real lines can be
 #: big. One MiB takes all of those and still stops a hostile file from making
 #: ``json.loads`` build a huge object.
 MAX_LINE_BYTES = 1024 * 1024
@@ -80,7 +80,7 @@ class TraceSummary:
     events: Counter = field(default_factory=Counter)
     #: The first valid ``t`` in the file. Trace times are raw perf_counter
     #: readings with an arbitrary origin, so everything a person reads is
-    #: relative to this. Gate 9: "first caller audio 87842.778s" said nothing.
+    #: relative to this. A raw reading like "first caller audio 87842.778s" said nothing.
     origin_t: float | None = None
     first_media_out_t: float | None = None
     first_media_in_t: float | None = None
@@ -327,7 +327,7 @@ def render(summary: TraceSummary) -> str:
         return "none" if offset is None else f"{offset:.3f}s"
 
     if summary.empty:
-        # Absence of a trace is not evidence about an agent (gate 9).
+        # Absence of a trace is not evidence about an agent.
         lines = [
             f"NO TRACE RECORDS    {summary.lines} lines, none of them a frame "
             "record. Is this a file written by --trace?"

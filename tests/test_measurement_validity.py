@@ -5,10 +5,10 @@ the log describes reality — feed it a wrong timeline and it will compute
 impeccable nonsense. This file closes that gap by injecting a *known* delay into
 a real server and checking the reported number matches it.
 
-The plan calls for this as a manual sanity check at gate 3, with the note "do
-not skip this". It is committed as a test instead, because a manual check gets
-performed once and then quietly stops happening, and a latency tool that drifts
-into reporting wrong latency is worse than no tool — people trust it.
+A manual sanity check of this kind is easy to skip, so it is committed as a
+test: a manual check gets performed once and then quietly stops happening, and
+a latency tool that drifts into reporting wrong latency is worse than no tool —
+people trust it.
 
 Tolerances are wide on purpose. These run against a real socket on a shared CI
 runner, and Windows' ~15.6 ms timer granularity alone accounts for a frame. The
@@ -56,7 +56,7 @@ def frames() -> list[bytes]:
 async def test_reported_latency_tracks_injected_latency(server, frames, injected_ms):
     """A deliberate delay of N ms is reported as roughly N ms.
 
-    The central check of gate 3, across a range wide enough that a proportional
+    The central check, across a range wide enough that a proportional
     error cannot hide. A single data point could be matched by a tool that is
     wrong by a constant; four points spanning 2 seconds could not.
 
@@ -155,9 +155,9 @@ async def test_the_tools_own_processing_does_not_inflate_the_measurement(server)
     """A long call is measured as accurately as a short one.
 
     The failure this guards against is the tool's own work leaking into its
-    numbers. Gate 2 found exactly that: quadratic audio accumulation running on
-    the event loop, which delayed frame handling and inflated the reported
-    latency progressively — worse the longer the call, and plausible throughout.
+    numbers. This has happened: quadratic audio accumulation ran on the event
+    loop, which delayed frame handling and inflated the reported latency
+    progressively — worse the longer the call, and plausible throughout.
 
     Sending five times as much audio with the same injected delay must not move
     the reported first-audio figure, because the agent replies near the start in

@@ -1,6 +1,6 @@
-"""Regression tests for review gate 13 (phase 12c, the full review's fixes).
+"""Regression tests for two-track forks and an overflowing scenario wait.
 
-Each test fails against bd0a92f, the commit the gate reviewed.
+Each test covers a behaviour the code used to get wrong.
 
 1. ``wait: .nan`` and ``.inf`` were refused, but a huge finite wait was not:
    ``wait: 1e308`` overflowed converting seconds to frames, mid-call.
@@ -23,7 +23,7 @@ from streamdouble.chaos import Impairments
 from streamdouble.protocol import TRACK_OUTBOUND, MediaStreamEncoder
 from streamdouble.scenario import ScenarioError
 from streamdouble.scenario import parse as parse_scenario
-from test_full_review import _fork_capture
+from test_scenario_and_fork_regressions import _fork_capture
 
 # 1 -------------------------------------------------------------------------
 

@@ -196,7 +196,7 @@ def test_an_unwritable_junit_path_does_not_destroy_the_call(server, tmp_path: Pa
 
 
 def test_the_action_passes_junit_through_the_environment():
-    """Gate 7's rule: no `${{ inputs.* }}` inside a run: block."""
+    """No `${{ inputs.* }}` inside a run: block; pass inputs through the environment."""
     text = (Path(__file__).resolve().parent.parent / "action.yml").read_text(encoding="utf-8")
     assert "JUNIT: ${{ inputs.junit }}" in text
     assert '--junit "$JUNIT"' in text

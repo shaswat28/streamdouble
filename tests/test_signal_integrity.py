@@ -1,6 +1,6 @@
 """End-to-end signal integrity: does audio survive the whole pipeline intact?
 
-Review gate 1 calls for decoding a ``media.payload`` back to a WAV and listening
+The obvious check is decoding a ``media.payload`` back to a WAV and listening
 to it, on the grounds that tests can pass while the audio is garbage. That is
 correct, and the by-ear check is still worth doing -- but most of what an ear
 catches can be stated precisely, and what can be stated precisely should be a
@@ -116,7 +116,7 @@ def test_no_sample_offset_is_introduced(speech_8k_path, speech_8k_samples):
 
     A one-frame or one-sample offset still correlates well at lag zero for
     speech-like content, so this checks the peak of the cross-correlation
-    directly. An offset here would put every Phase 3 latency measurement out by
+    directly. An offset here would put every latency measurement out by
     a constant, which is exactly the kind of error that gets trusted because it
     looks plausible.
     """

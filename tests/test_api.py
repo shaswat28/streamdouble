@@ -4,7 +4,7 @@ These tests exist for two reasons beyond covering `api.py`'s own behaviour.
 
 The first is that this API is now the *only* implementation. `cli.py` renders
 what it returns and adds nothing, so a bug here is a bug in both front ends,
-and `test_review_gate_6.py` proves that coupling by mutation.
+and `test_api_trace_plugin_regressions.py` proves that coupling by mutation.
 
 The second is that `streamdouble scenario` parsed correctly and then exited
 "unknown command" for its entire life in a public repository because every

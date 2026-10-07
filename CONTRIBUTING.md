@@ -63,8 +63,8 @@ Each of these exists because of a specific bug that reached the repository.
 
 A fix needs a test that fails against the old behaviour. If the bug was in
 timing or concurrency, prefer a test that reproduces the condition over one that
-asserts on structure — `tests/test_review_gate_*.py` are written that way, and
-each names the failure it prevents.
+asserts on structure — the `tests/test_*_regressions.py` files are written that
+way, and each names the failure it prevents.
 
 Property tests and mutation checks are welcome. There is a mutation-testing
 habit in this repository rather than a tool: deliberately break something, and

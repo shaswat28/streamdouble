@@ -1,6 +1,6 @@
-"""Regression tests for review gate 10 (`--junit`).
+"""Regression tests for the `--junit` report.
 
-Each test fails against the code as it stood at b5ea49b.
+Each test covers a behaviour the report used to get wrong.
 
 1. A --save-baseline refusal exited 4 after the report had already been
    written from calls that all passed, so the XML showed green next to a

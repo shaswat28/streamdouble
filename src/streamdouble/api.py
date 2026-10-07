@@ -1,6 +1,6 @@
 """The public Python API.
 
-``streamdouble`` began as a command, and for its first six phases the only way
+``streamdouble`` began as a command, and for its first releases the only way
 to use it was to run one and parse the JSON. That is a fine interface for a
 shell script and a poor one for a test suite, which is where the people this
 tool is for actually work.
@@ -200,7 +200,7 @@ async def _run(
     no diagnostic at all.
 
     That ``finally`` must not be able to raise, and getting this wrong once is
-    how gate 6 found it. ``flush`` writes a file, so it raises for a typo in
+    how it was found. ``flush`` writes a file, so it raises for a typo in
     the path, a read-only CI workspace or a full disk -- and from a ``finally``
     that exception *replaces* whatever the call was actually reporting. Two
     failures, both reproduced: a perfectly good call lost its entire report
@@ -208,9 +208,9 @@ async def _run(
     agent reported ``PermissionError`` instead of ``ConnectionFailed``,
     pointing the user at their filesystem while their agent was down.
 
-    This is gate 2's finding wearing different clothes -- there, a ``finally``
-    that raised discarded the ``ConnectionClosed`` that was the real problem.
-    The rule that came out of it is the rule here: cleanup does not get to
+    This is an earlier session bug wearing different clothes -- there, a
+    ``finally`` that raised discarded the ``ConnectionClosed`` that was the
+    real problem. The rule that came out of it is the rule here: cleanup does not get to
     decide how a call ended.
     """
     trace_failure: OSError | None = None
@@ -429,7 +429,7 @@ def _agent_segments(report: CallReport) -> list[tuple[float, bytes]]:
     frame, and appends the payloads to one buffer in that same order -- so the
     buffer can be cut back up by walking the events. Reconstructing rather than
     storing each payload twice keeps the hot path unchanged, which matters because
-    that path is the one gate 2 and gate 6 both found being slowed down.
+    that path has twice been found being slowed down.
 
     A frame whose bytes were dropped by the audio cap is skipped: the offsets
     of everything after it would otherwise slide, and a stereo file that is

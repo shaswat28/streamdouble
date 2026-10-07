@@ -1,19 +1,15 @@
-"""Regression tests for what review gate 6 found.
+"""Regression tests for the public API, the frame trace and the pytest plugin.
 
-Gate 6 covered the API extraction, the frame trace and the pytest plugin. Four
-findings, and the two worst are repeats: this project had already found and
-fixed both shapes in earlier gates, and they came back in new code written by
-someone who knew about them.
+Four findings, and the two worst are repeats: the project had already found and
+fixed both shapes elsewhere, and they came back in new code written by someone
+who knew about them. It is worth being explicit about which is which:
 
-That is the argument for the gates existing, so it is worth being explicit
-about which is which:
-
-* **Cleanup deciding how a call ended.** Gate 2 found a `finally` that raised
-  and discarded the `ConnectionClosed` which was the real problem. Gate 6 found
-  `trace.flush()` in a `finally` doing exactly the same thing.
-* **Unbounded growth per call.** Gate 4 measured 206 MB of buffered audio and
-  436 MB peak from a flooding endpoint, and capped the audio and the event log.
-  The trace arrived afterwards with no cap at all.
+* **Cleanup deciding how a call ended.** An earlier bug was a `finally` that
+  raised and discarded the `ConnectionClosed` which was the real problem. Here,
+  `trace.flush()` in a `finally` did exactly the same thing.
+* **Unbounded growth per call.** A flooding endpoint was measured driving 206 MB
+  of buffered audio and 436 MB peak, and the audio and the event log were capped
+  in response. The trace arrived afterwards with no cap at all.
 
 Every test here was verified to fail against the behaviour it describes.
 """
@@ -72,8 +68,8 @@ async def test_an_unwritable_trace_does_not_mask_the_real_error(
     """The error the user sees must be the one that actually happened.
 
     Before the fix this raised PermissionError, pointing at the filesystem
-    while the actual problem was an agent that was not running. That is gate
-    2's finding exactly: cleanup replacing the real error, and debugging then
+    while the actual problem was an agent that was not running. That is a bug the
+    session once had: cleanup replacing the real error, and debugging then
     aimed at streamdouble rather than at the thing that was wrong.
     """
     a_directory = tmp_path / "somewhere"
@@ -127,7 +123,7 @@ async def test_the_trace_stops_growing_and_says_so(tmp_path: Path):
 async def test_payload_bytes_are_capped_separately_from_record_count(tmp_path: Path):
     """The record cap does not bound memory on its own.
 
-    Gate 4's endpoint sent few frames and enormous ones -- 400 KB each, under
+    A flooding endpoint sent few frames and enormous ones -- 400 KB each, under
     the per-frame limit, because that limit is per frame while the buffer is
     per call. A count-based cap alone would let a handful of records carry
     hundreds of megabytes, which is the same trap in a new place.
@@ -166,8 +162,8 @@ async def test_inbound_frames_are_parsed_once_not_twice(server, speech_8k_path, 
 
     The first implementation handed `note_in` the raw message, which ran
     `json.loads` again on bytes `parse_outbound` had just decoded. Real agents
-    batch audio into ~8000-byte frames and gate 3 measured JSON and base64 work
-    at 0.32 ms on a large payload, so doubling it lands squarely next to the
+    batch audio into ~8000-byte frames and JSON and base64 work measured
+    0.32 ms on a large payload, so doubling it lands squarely next to the
     pacer -- the exact cost this design exists to avoid.
 
     Counting calls rather than timing them: a timing test for a sub-millisecond

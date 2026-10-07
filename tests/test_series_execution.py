@@ -178,7 +178,7 @@ def test_a_timeout_outranks_a_regression(server, speech_8k_path, tmp_path: Path)
     assert main(cli_args(server, speech_8k_path, "-n", str(MIN_RUNS_FOR_COMPARISON),
                          "--save-baseline", str(baseline_path), "--quiet")) == 0
 
-    # MIN_RUNS_FOR_COMPARISON rather than a literal: gate 7 added a floor on
+    # MIN_RUNS_FOR_COMPARISON rather than a literal: a floor was added on
     # runs for a baseline comparison, and this test hard-coded 2 -- so the
     # guard turned it red, correctly, by refusing before the calls were placed.
     code = main([

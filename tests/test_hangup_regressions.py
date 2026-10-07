@@ -1,11 +1,11 @@
-"""Regression tests for review gate 12 (phase 12b, a hangup is a hangup).
+"""Regression tests for hangup handling: a hangup is a hangup.
 
-Each test fails against 4648e6a, the phase 12b commit the gate reviewed.
+Each test covers a behaviour the session used to get wrong.
 
 1. An agent closing between scenario steps set ``_hung_up``, so the remaining
    steps were skipped -- including ``expect`` steps, which then never appeared
    in the results. A failed expectation became exit 0. (A hangup mid-step
-   already skipped them before phase 12b; this closes both.)
+   already skipped them; this closes both.)
 2. Any close the session did not start was blamed on the agent, including the
    ones the websockets library starts itself, such as 1009 for an oversized
    frame.
@@ -14,9 +14,9 @@ Each test fails against 4648e6a, the phase 12b commit the gate reviewed.
 4. The JUnit case for a close before audio existed only when it failed, so CI
    history could never show it as fixed.
 
-The gate's fifth finding, three overlapping close flags, is the reshaping that
-fixed 2 and 3 -- one ``_socket_closed`` event and a ``closed_by`` cause -- and
-has no behaviour of its own to test.
+Three overlapping close flags were replaced by one ``_socket_closed`` event and
+a ``closed_by`` cause. That reshaping fixed 2 and 3 and has no behaviour of its
+own to test.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def config(**kw) -> SessionConfig:
 
 
 def scenario(*steps):
-    return parse_scenario({"name": "gate 12", "steps": list(steps)})
+    return parse_scenario({"name": "hangup", "steps": list(steps)})
 
 
 # 1 -------------------------------------------------------------------------

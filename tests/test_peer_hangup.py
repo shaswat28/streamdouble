@@ -1,9 +1,9 @@
-"""Regression tests for an agent hanging up, found by CI rather than a gate.
+"""Regression tests for an agent hanging up, found by CI.
 
-``test_review_gate_2::test_an_abrupt_hangup_still_reports_cleanly`` failed once
-on Python 3.13 on Windows. The session only noticed a hangup when a later send
-failed, and the receive loop ended silently on a clean close. If the close
-arrived after the caller's last frame there was no later send, so:
+``test_async_lifecycle_regressions::test_an_abrupt_hangup_still_reports_cleanly``
+failed once on Python 3.13 on Windows. The session only noticed a hangup when a
+later send failed, and the receive loop ended silently on a clean close. If the
+close arrived after the caller's last frame there was no later send, so:
 
 1. The call was reported as ``timed_out`` -- "the agent sent no audio" -- after
    sitting out the whole response timeout on a socket that was already closed.
@@ -11,14 +11,15 @@ arrived after the caller's last frame there was no later send, so:
    was noticed, because ``closed_early`` never reached the exit code. README
    documents exit 2 as "the agent never spoke".
 
-The three regression tests fail against 9f64564 on behaviour. They use
+The three regression tests fail on behaviour against the original code. They use
 ``hangup_after=`` at or past the number of frames sent, so the close lands
 after the last send and nothing depends on a runner being slow. The three
-guards at the end check the fix does not overreach; against 9f64564 they fail
-only because ``closed_by`` did not exist, which proves nothing.
+guards at the end check the fix does not overreach; against the original code
+they fail only because ``closed_by`` did not exist, which proves nothing.
 
-Gate 12 reshaped the fix (``hung_up_silent`` became ``closed_by`` plus
-``closed_before_audio``); its own findings are in test_review_gate_12.py.
+The fix was later reshaped (``hung_up_silent`` became ``closed_by`` plus
+``closed_before_audio``); the findings from that change are in
+test_hangup_regressions.py.
 """
 
 from __future__ import annotations

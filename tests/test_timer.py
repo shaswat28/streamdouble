@@ -74,8 +74,8 @@ def test_other_platforms_never_touch_winmm():
 
 
 #: What a real Windows machine may legitimately answer. REFUSED is correct on a
-#: Windows without winmm.dll (e.g. Nano Server), and gate 11 found these tests
-#: failing there while the product behaved exactly as designed.
+#: Windows without winmm.dll (e.g. Nano Server), and these tests used to
+#: fail there while the product behaved exactly as designed.
 WINDOWS_OUTCOMES = {timer.RAISED, timer.REFUSED}
 
 

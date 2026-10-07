@@ -1,8 +1,7 @@
-"""Regression tests for what review gate 7 found.
+"""Regression tests for repeat runs and baseline comparison.
 
-Gate 7 covered the repeat-runs and baseline machinery. Four findings, and three
-of them are the same failure wearing different clothes: **a regression gate that
-silently stops checking**.
+Four findings, and three of them are the same failure wearing different
+clothes: **a regression gate that silently stops checking**.
 
 That is the characteristic way this kind of tool dies. It does not crash and it
 does not report a wrong number -- it keeps printing a clean summary while

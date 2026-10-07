@@ -1,9 +1,10 @@
-"""Regression tests for the issues found at review gate 3.
+"""Regression tests for measurement conventions: does the tool measure what it
+claims to?
 
-Gate 3 asks whether the tool measures what it claims to. Its findings shared a
-character: every number looked plausible, none was obviously broken, and the
-errors were in the *convention* rather than the arithmetic — the kind that
-survive review precisely because the output reads correctly.
+The findings here shared a character: every number looked plausible, none was
+obviously broken, and the errors were in the *convention* rather than the
+arithmetic -- the kind that survive review precisely because the output reads
+correctly.
 """
 
 from __future__ import annotations

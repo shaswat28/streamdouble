@@ -1,4 +1,4 @@
-"""Regression tests for the issues found at review gate 1.
+"""Regression tests for audio loading and frame-sequence validation.
 
 Kept in one file rather than scattered, so the findings and their fixes stay
 legible together. Each test names the failure it prevents.
@@ -165,8 +165,8 @@ def test_resample_validates_shape_even_when_no_rate_change_is_needed():
 def test_nothing_may_be_sent_before_start(event):
     """The encoder refuses to emit any frame before ``start``.
 
-    Phase 3 reports agents that violate the protocol, so the simulator must not
-    be able to violate it first -- an ordering bug in the session layer would
+    The metrics layer reports agents that violate the protocol, so the simulator
+    must not be able to violate it first -- an ordering bug in the session layer would
     otherwise produce an agent-side failure that gets blamed on the agent.
     """
     encoder = MediaStreamEncoder()

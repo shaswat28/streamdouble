@@ -1,15 +1,13 @@
 """Integration tests against the example echo agent.
 
-Phase 1 has no session layer yet, so these drive the protocol directly over
-Starlette's in-process WebSocket test transport. That is deliberate: it proves
+These drive the protocol directly over Starlette's in-process WebSocket test
+transport, without the session layer. That is deliberate: it proves
 the frames this package builds are accepted by a real ASGI WebSocket endpoint,
-without waiting for ``session.py`` to exist and without a socket, a port, or a
-race to bind one.
+without a socket, a port, or a race to bind one.
 
 The point is to close the loop that unit tests cannot: the frames are not merely
 shaped the way the documentation says, they are shaped the way a real endpoint
-can consume. When Phase 2 adds the live session, these stay as the fast
-in-process layer beneath the real socket tests.
+can consume. These stay as the fast in-process layer beneath the real socket tests.
 """
 
 from __future__ import annotations
@@ -108,7 +106,7 @@ def test_the_agent_sends_a_mark_when_it_finishes_speaking(client, speech_frames)
     """The mark arrives, and arrives after the audio it checkpoints.
 
     Ordering matters: a mark is a position in the audio stream, so one that
-    arrives before the audio would be meaningless. Phase 2 echoes these back.
+    arrives before the audio would be meaningless. The live session echoes these back.
     """
     received = drive(client, speech_frames, expect=11)
 
@@ -132,7 +130,7 @@ def test_a_silent_agent_sends_nothing(client, speech_frames):
     """An agent that never replies is a supported case, not a hang.
 
     This is the shape of a real failure -- an agent whose STT never fires -- and
-    the client must be able to distinguish it from a slow reply. Phase 3 turns
+    the client must be able to distinguish it from a slow reply. The session layer turns
     this into a timeout with its own exit code.
     """
     assert drive(client, speech_frames, query="?mode=silent", expect=0) == []
@@ -141,7 +139,7 @@ def test_a_silent_agent_sends_nothing(client, speech_frames):
 def test_an_agent_that_thinks_before_replying_still_replies(client, speech_frames):
     """A deliberate delay does not break the exchange.
 
-    The same hook Phase 3 uses to check that measured latency matches injected
+    The same hook the metrics tests use to check that measured latency matches injected
     latency. Kept short here so the suite stays fast; the measurement check
     itself belongs with the metrics layer.
     """

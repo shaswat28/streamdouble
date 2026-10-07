@@ -132,8 +132,8 @@ CLOSED_BY_STREAMDOUBLE = "streamdouble"
 class SessionEvent:
     """One timestamped thing that happened during a call.
 
-    The session records; it does not interpret. Every measurement Phase 3
-    reports is derived from this log rather than computed inline, for two
+    The session records; it does not interpret. Every measurement the
+    metrics layer reports is derived from this log rather than computed inline, for two
     reasons: the arithmetic becomes testable against a synthetic log with no
     socket involved, and a surprising latency figure can be traced back to the
     events that produced it instead of being taken on trust.
@@ -357,7 +357,7 @@ class Session:
         # Position in the outbound track, for a two-track fork.
         #
         # On the session rather than inside the send loop, and that is the
-        # whole of gate 8's first finding. Pairing by the loop's own index
+        # whole of an early two-track bug. Pairing by the loop's own index
         # restarted the agent's audio from the beginning on every scenario
         # step, so `say` then `wait` forked the agent's opening words twice --
         # a transcript of something that never happened. A plain call has one
@@ -623,7 +623,7 @@ class Session:
         Leaving them out made a run greener than it was: a scenario whose agent
         spoke, failed an ``expect``, and hung up before the ``expect`` step
         came round exited 0, because the expectation that would have failed
-        was never evaluated and so never listed. Gate 12. Not evaluated is not
+        was never evaluated and so never listed. Not evaluated is not
         passed, the same rule as a ``None`` metric.
         """
         for step in steps:
@@ -665,8 +665,8 @@ class Session:
 
         On a two-track fork each tick carries the agent's frame for that instant
         and then the caller's -- always in that order, so wire order does not
-        depend on whether an impairment is set (gate 13: with --latency-ms it
-        flipped on every tick). Both go out inside one pacer tick
+        depend on whether an impairment is set (with --latency-ms the order
+        used to flip on every tick). Both go out inside one pacer tick
         rather than one per tick: they represent the same 20 ms of wall time on
         a real call, and spacing them a tick apart would halve the effective
         frame rate of each track and make every timing figure wrong by a factor
@@ -809,7 +809,8 @@ class Session:
         # last frame was never noticed: the session sat out the response
         # timeout on a closed socket and reported "the agent sent no audio",
         # and one that hung up mid-call without speaking exited 0. CI found the
-        # first as a race in test_review_gate_2 on a slow Windows runner.
+        # first as a race in test_async_lifecycle_regressions on a slow
+        # Windows runner.
         #
         # Our own end-of-call close ends the loop too, and is not an outcome.
         if not self._closing.is_set():
@@ -850,7 +851,7 @@ class Session:
         The frame is stamped before the send and recorded after it. Stamping
         first keeps the trace on the same timeline as the metrics; recording
         after means a frame whose send raised is not written down as though it
-        went out. Gate 6 found the earlier version claiming exactly that, and
+        went out. An earlier version claimed exactly that, and
         the frame it lied about was the last one before a disconnect -- which
         is the one someone opens a trace to look at.
         """
@@ -914,9 +915,9 @@ class Session:
             self._record("fork_warning", at=arrived_at, frame_type=frame_type)
 
         # Hand the already-parsed frame to the trace rather than letting it
-        # run json.loads a second time. Gate 6 found the duplicate: real agents
-        # batch outbound audio into ~8000-byte frames, JSON decode of a large
-        # payload was measured at 0.32 ms back at gate 3, and doubling that
+        # run json.loads a second time. Real agents batch outbound audio into
+        # ~8000-byte frames, JSON decode of a large payload was measured at
+        # 0.32 ms, and doubling that
         # lands inside the receive loop next to the pacer -- the precise
         # "observer perturbs the observed" cost this design exists to avoid.
         if self.config.trace is not None:

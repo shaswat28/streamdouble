@@ -153,7 +153,7 @@ class RunSeries:
     """Several calls, summarised.
 
     ``fingerprint`` describes what was being measured -- which clip, which
-    impairments, which seed. Phase 8's baseline comparison refuses to compare
+    impairments, which seed. The baseline comparison refuses to compare
     two series whose fingerprints differ, because a different clip is a
     different experiment rather than a regression.
     """
@@ -208,7 +208,7 @@ def summarise(
     Built from the JSON payloads rather than from the reports themselves, so
     that a series can be reconstructed from a saved baseline file with exactly
     the same code that built it live. Two code paths for "summarise these runs"
-    would be two paths that drift, which is the lesson Phase 7 was about.
+    would be two paths that drift, which is the lesson repeat runs taught.
     """
     series = []
     for name, label, unit in TRACKED:

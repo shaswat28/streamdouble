@@ -1,9 +1,9 @@
-"""Regression tests for the issues found at review gate 4.
+"""Regression tests for hostile, broken and unexpectedly fast peers.
 
-Gate 4 pairs a code review with a security review, and its findings share a
-shape: nothing here misbehaves against a well-behaved agent. They only appear
-when the peer is hostile, broken, or merely much faster than expected — which
-is the situation this tool exists to be pointed at.
+Nothing here misbehaves against a well-behaved agent. These problems only appear
+when the peer is hostile, broken, or merely much faster than expected -- which
+is the situation this tool exists to be pointed at. They cover code-quality and
+security findings together, since they share that shape.
 """
 
 from __future__ import annotations
@@ -254,7 +254,7 @@ def test_an_absolute_path_is_still_honoured(tmp_path):
 
 
 def test_inbound_frames_remain_size_limited():
-    """The per-frame cap from gate 2 is still in place.
+    """The per-frame cap is still in place.
 
     It does not bound the call -- that is what MAX_AUDIO_BYTES is for -- but it
     is what stops a single frame being unbounded, and the two are easy to

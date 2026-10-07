@@ -306,7 +306,7 @@ class MediaStreamEncoder:
     20 ms instant must carry the same one. A single clock advanced by every
     ``media`` frame ran each track of a two-track fork at 40 ms per 20 ms of
     audio, interleaved -- contradicting the rule in the next paragraph, which
-    this docstring already stated. Found by the phase-12 full review.
+    this docstring already stated. Found in a full-codebase review.
 
     Deriving the timestamp from frames counted rather than from a clock is
     deliberate: ``media.timestamp`` is *presentation* time, so it must advance at
@@ -315,7 +315,7 @@ class MediaStreamEncoder:
 
     Counters live here, not in the session, so that frame numbering is testable
     with no network at all. The encoder also enforces frame *ordering*: nothing
-    before ``start``, nothing after ``stop``, and only one of each. Phase 3
+    before ``start``, nothing after ``stop``, and only one of each. The metrics layer
     reports an agent that violates the protocol, so the simulator must not be
     capable of violating it first.
     """
@@ -360,7 +360,7 @@ class MediaStreamEncoder:
 
         The furthest any track has reached, which on a single-track stream is
         simply the presentation time of its next frame -- the meaning this had
-        before tracks got clocks of their own (gate 13). Per track, see
+        before tracks got clocks of their own. Per track, see
         :meth:`track_time_ms`.
 
         Tracked separately from the chunk counter rather than derived from it,
@@ -497,9 +497,9 @@ class InboundMedia:
     #: The frame exactly as it arrived, after JSON decoding.
     #:
     #: Carried so that a caller wanting the whole frame -- the trace does --
-    #: does not have to parse the message a second time. Gate 6 found exactly
-    #: that duplication costing a JSON decode per inbound frame inside the
-    #: receive loop, and real agents batch audio into ~8000-byte frames.
+    #: does not have to parse the message a second time. That duplication was
+    #: found costing a JSON decode per inbound frame inside the receive loop,
+    #: and real agents batch audio into ~8000-byte frames.
     #:
     #: Defaults to an empty dict so that existing constructions and the many
     #: tests building these directly keep working unchanged, and is excluded

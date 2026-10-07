@@ -98,7 +98,7 @@ def _call_suite(report: CallReport, name: str) -> ET.Element:
     # The other way to reach exit 2. Always present, so the list of testcases
     # does not depend on the outcome -- a case that exists only when it fails
     # shows up in CI history as "new, failing" and then "removed", never as
-    # "fixed" (gate 12).
+    # "fixed".
     if result.closed_before_audio:
         suite.case(
             "no close before audio",
@@ -109,7 +109,7 @@ def _call_suite(report: CallReport, name: str) -> ET.Element:
         suite.case("no close before audio")
 
     # `what` is Expect.describe(), which already reads "expect clear" or
-    # "expect no clear". Prefixing it again gave "expect expect clear" (gate 10).
+    # "expect no clear". Prefixing it again gave "expect expect clear".
     for what, passed in result.expectations:
         suite.case(what, failure=None if passed else f"failed: {what}")
 
@@ -165,8 +165,8 @@ def build(
 
     ``error`` adds a failing ``streamdouble`` suite, for when the command
     failed in a way no call report reflects: a connection that never opened,
-    a usage error, a baseline refused after every call passed. Gate 10 found
-    that last case writing an all-green report next to exit 4.
+    a usage error, a baseline refused after every call passed. This last case used
+    to write an all-green report next to exit 4.
     """
     root = ET.Element("testsuites", name=_clean(name))
     if error is not None:

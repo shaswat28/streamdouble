@@ -335,7 +335,7 @@ def _parse_say(value: Any, position: str, base: Path) -> Say:
 #: Longest a single step may last. A day is far past any real call -- and past
 #: max_call_s, which ends the call first -- so anything longer is a typo, and
 #: an unbounded one is a crash: `wait: 1e308` overflowed converting seconds to
-#: frames mid-call even after .inf was refused (gate 13).
+#: frames mid-call even after .inf was refused.
 MAX_STEP_S = 24 * 60 * 60
 
 

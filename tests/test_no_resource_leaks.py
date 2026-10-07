@@ -89,7 +89,7 @@ async def test_repeated_calls_leak_no_event_loops(server, speech_8k_path):
 async def test_repeated_calls_leak_no_sockets(server, speech_8k_path):
     """`Session.run` closes its connection in a `finally`; this proves it.
 
-    A socket left open per call is the failure gate 2 went looking for on the
+    A socket left open per call is the failure to look for on the
     error paths, and the one most likely to come back when the send and receive
     tasks are next rearranged.
     """
@@ -110,7 +110,7 @@ async def test_repeated_calls_leak_no_sockets(server, speech_8k_path):
 async def test_the_error_paths_leak_nothing_either(server, speech_8k_path):
     """Cleanup on the paths that skip the happy ending.
 
-    Gate 2's finding was a `finally` that raised and replaced the real error,
+    An earlier bug was a `finally` that raised and replaced the real error,
     and its lesson was that error paths are where cleanup is skipped. A silent
     agent times out, a garbage agent aborts on a violation, and an unreachable
     one never connects at all -- three different exits from `run`, none of which
