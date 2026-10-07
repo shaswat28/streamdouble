@@ -22,7 +22,7 @@ jobs:
         # holds across platforms. 3.13 matters specifically: audioop was
         # removed there, so it is the run that proves the codec stands on its
         # own rather than leaning on the stdlib reference.
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         python: ["3.11", "3.12", "3.13"]
 
     steps:
@@ -40,7 +40,9 @@ jobs:
         run: python -m ruff check .
 
       - name: Test
-        run: python -m pytest -q
+        # The suite is dominated by real-time paced calls that mostly wait, so
+        # four workers cut the wall time from about eleven minutes to three.
+        run: python -m pytest -q -n 4
 
       - name: Fixtures regenerate identically
         # The golden file is only meaningful if the fixtures it pins are
