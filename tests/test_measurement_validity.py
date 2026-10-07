@@ -166,14 +166,20 @@ async def test_the_tools_own_processing_does_not_inflate_the_measurement(server)
     short_frames = audio.wav_to_ulaw_frames("fixtures/speech_8k.wav")[:25]
     long_frames = audio.wav_to_ulaw_frames("fixtures/long_8k.wav")[:125]
 
-    measurements = []
-    for frames in (short_frames, long_frames):
-        result = await Session(
-            f"{server}?delay_ms=300", frames, config=config()
-        ).run()
-        measurements.append(compute(result).time_to_first_audio_ms)
+    async def first_audio_ms(frames):
+        # Best of three: a loaded CI runner can delay any single call by
+        # seconds, but the tool's own work inflates every call, so the
+        # minimum still exposes a real leak while ignoring scheduler noise.
+        samples = []
+        for _ in range(3):
+            result = await Session(
+                f"{server}?delay_ms=300", frames, config=config()
+            ).run()
+            samples.append(compute(result).time_to_first_audio_ms)
+        return min(samples)
 
-    short_ms, long_ms = measurements
+    short_ms = await first_audio_ms(short_frames)
+    long_ms = await first_audio_ms(long_frames)
     assert abs(long_ms - short_ms) < 250, (
         f"first audio measured {short_ms:.0f}ms on a short call but "
         f"{long_ms:.0f}ms on a call five times longer"

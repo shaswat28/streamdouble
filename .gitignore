@@ -22,8 +22,3 @@ demo-out/
 # the suite ran, and *.jsonl and /baseline.json were ignored to hide it. They
 # now write into pytest's tmp_path instead, so the ignores are gone: a file
 # appearing here again is a real bug, and hiding it would be the wrong fix.
-
-# Private planning and agent notes stay local.
-/[Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]
-/[Pp][Ll][Aa][Nn].[Mm][Dd]
-/docs/[Ll][Aa][Uu][Nn][Cc][Hh]-[Dd][Rr][Aa][Ff][Tt][Ss].[Mm][Dd]
