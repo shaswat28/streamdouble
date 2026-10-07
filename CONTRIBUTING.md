@@ -43,8 +43,7 @@ without one.
 
 ### Things this project is strict about
 
-Each of these exists because of a specific bug that reached the repository, and
-each is written up in `PLAN.md` with the story attached.
+Each of these exists because of a specific bug that reached the repository.
 
 - **Verify protocol details against the live Twilio docs, never from memory.**
   The original plan's protocol table was wrong in three ways.

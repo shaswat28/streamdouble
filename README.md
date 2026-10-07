@@ -513,9 +513,6 @@ records the outcome: `raised`, `refused`,
 or `not needed` off Windows. A lateness figure means something only when you
 know which timer produced it.
 
-`PLAN.md` records the build plan, the decisions taken, and what each review gate
-found.
-
 ## Use it from Claude Code
 
 `skill/SKILL.md` is a Claude Code skill wrapper. Copy it into `.claude/skills/`

@@ -61,8 +61,7 @@ from .trace import TraceConfig
 #: exit-code test went red at once.
 #: Fewest runs before a baseline comparison is allowed.
 #:
-#: Not a style preference. PLAN.md records the reasoning as a phase-8
-#: precondition: a baseline comparison must not ship without repeat runs,
+#: A baseline comparison must not ship without repeat runs,
 #: because comparing two single calls compares two samples of a noisy process
 #: and produces false regressions. Three is the floor at which a median means
 #: anything at all; 20 is where the percentile does, which the summary says.

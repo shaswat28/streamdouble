@@ -103,7 +103,7 @@ def test_a_healthy_run_still_writes_its_baseline(server, speech_8k_path, tmp_pat
 def test_a_baseline_comparison_needs_more_than_one_run(
     server, speech_8k_path, tmp_path: Path, capsys
 ):
-    """PLAN.md called this out as a precondition and it shipped anyway.
+    """A baseline comparison once shipped without its repeat-run precondition.
 
     Two calls over a real socket differ by tens of milliseconds for reasons
     that have nothing to do with the agent. This project's own trace parity
